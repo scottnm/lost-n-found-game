@@ -4,7 +4,7 @@ A quick puzzle game for GGJ21
 
 # Work breakdown
 
-* [ ] render a grid
+* [X] render a grid
 * [ ] support clicking on items in the grid
 * [ ] support generating a solution cell and hint cells
 * [ ] support hinding solution cells and hint cells and only reveal cells when clicked
