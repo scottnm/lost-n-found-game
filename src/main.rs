@@ -1,4 +1,7 @@
+mod randwrapper;
 extern crate pancurses;
+
+use crate::randwrapper::*;
 
 mod utils {
     #[derive(Debug, PartialEq, Eq)]
@@ -35,35 +38,100 @@ use utils::Rect;
 
 const TITLE: &str = "Lost-n-Found";
 
-#[derive(Debug, Clone, Copy)]
-enum GridItem {
-    X,
-}
+mod game {
+    use super::*;
 
-struct GameGrid {
-    _data: Box<[GridItem]>,
-    width: i32,
-    height: i32,
-}
-
-impl GameGrid {
-    fn new(width: i32, height: i32) -> Self {
-        GameGrid {
-            _data: vec![GridItem::X; (width * height) as usize].into_boxed_slice(),
-            width,
-            height,
-        }
+    #[derive(Debug, Clone, Copy)]
+    pub enum HintDir {
+        Left,
+        Up,
+        Right,
+        Down,
     }
 
-    fn item(&self, x: i32, y: i32) -> Option<GridItem> {
-        if x < 0 || x >= self.width || y < 0 || y >= self.height {
-            return None;
+    #[derive(Debug, Clone, Copy)]
+    pub enum GridItem {
+        Solution,
+        Hint(HintDir),
+    }
+
+    pub struct GameGrid {
+        data: Box<[GridItem]>,
+        width: i32,
+        height: i32,
+    }
+
+    impl GameGrid {
+        pub fn new(width: i32, height: i32, rng: &mut dyn RangeRng<i32>) -> Self {
+            let solution_cell = (rng.gen_range(0, width), rng.gen_range(0, height));
+
+            let num_cells = (width * height) as usize;
+            let mut data = Vec::with_capacity(num_cells);
+            for row in 0..height {
+                for col in 0..width {
+                    fn displacement_to_hint_direction(
+                        x_displacement: i32,
+                        y_displacement: i32,
+                    ) -> HintDir {
+                        assert!(x_displacement != 0 || y_displacement != 0);
+                        if x_displacement.abs() > y_displacement.abs() {
+                            if x_displacement > 0 {
+                                HintDir::Left
+                            } else {
+                                HintDir::Right
+                            }
+                        } else {
+                            if y_displacement > 0 {
+                                HintDir::Up
+                            } else {
+                                HintDir::Down
+                            }
+                        }
+                    }
+
+                    let x_displacement = col - solution_cell.0;
+                    let y_displacement = row - solution_cell.1;
+                    let cell = {
+                        if x_displacement == 0 && y_displacement == 0 {
+                            GridItem::Solution
+                        } else {
+                            let hint =
+                                displacement_to_hint_direction(x_displacement, y_displacement);
+                            GridItem::Hint(hint)
+                        }
+                    };
+
+                    data.push(cell);
+                }
+            }
+
+            GameGrid {
+                data: data.into_boxed_slice(),
+                width,
+                height,
+            }
         }
 
-        let index = (self.width * y + x) as usize;
-        Some(self._data[index])
+        pub fn width(&self) -> i32 {
+            self.width
+        }
+
+        pub fn height(&self) -> i32 {
+            self.height
+        }
+
+        pub fn item(&self, x: i32, y: i32) -> Option<GridItem> {
+            if x < 0 || x >= self.width || y < 0 || y >= self.height {
+                return None;
+            }
+
+            let index = (self.width * y + x) as usize;
+            Some(self.data[index])
+        }
     }
 }
+
+use game::*;
 
 // helpers for transforming from one coordinate space to another
 mod xform {
@@ -147,9 +215,10 @@ fn main() {
     pancurses::resize_term(WIN.height, WIN.width);
 
     // Not using a Rect because this grid isn't ACTUALLY sized normally like a rect. There are spaces
-    let game_grid = GameGrid::new(25, 20);
-    let grid_left = (WIN.width - game_grid.width * 2) / 2;
-    let grid_top = (WIN.height - game_grid.height * 2) / 2;
+    let mut rng = ThreadRangeRng::new();
+    let game_grid = GameGrid::new(25, 20, &mut rng);
+    let grid_left = (WIN.width - game_grid.width() * 2) / 2;
+    let grid_top = (WIN.height - game_grid.height() * 2) / 2;
 
     #[derive(Debug)]
     struct MouseState {
@@ -198,20 +267,34 @@ fn main() {
         window.mvaddstr(1, 0, format!("{:?}", last_clicked_cell));
 
         // add the leading border cells on top of the grid
-        for col in 0..game_grid.width {
+        for col in 0..game_grid.width() {
             window.mvaddstr(grid_top, grid_left + 1 + 4 * col, "___");
         }
 
         // render the grid
-        for row in 0..game_grid.height {
+        for row in 0..game_grid.height() {
+            let row_offset = (row * 2) + grid_top + 1;
             // add the leading border cells for each row
-            window.mvaddch((row * 2) + grid_top + 1, grid_left, '|');
-            window.mvaddch((row * 2) + grid_top + 2, grid_left, '|');
+            window.mvaddch(row_offset, grid_left, '|');
+            window.mvaddch(row_offset + 1, grid_left, '|');
 
             // render each cell
-            for col in 0..game_grid.width {
-                window.mvaddstr((row * 2) + grid_top + 1, grid_left + 1 + 4 * col, "   |");
-                window.mvaddstr((row * 2) + grid_top + 2, grid_left + 1 + 4 * col, "___|");
+            for col in 0..game_grid.width() {
+                let col_offset = grid_left + 1 + 4 * col;
+                // safe to unwrap since we are iterating over the grid by its own bounds
+                let grid_item = game_grid.item(col, row).unwrap();
+                let grid_item_lines = match grid_item {
+                    GridItem::Solution => ["   |", "___|"],
+                    GridItem::Hint(hint_dir) => match hint_dir {
+                        HintDir::Left => ["<--|", "___|"],
+                        HintDir::Right => ["-->|", "___|"],
+                        HintDir::Up => [" ^ |", "_|_|"],
+                        HintDir::Down => [" | |", "_V_|"],
+                    },
+                };
+
+                window.mvaddstr(row_offset, col_offset, grid_item_lines[0]);
+                window.mvaddstr(row_offset + 1, col_offset, grid_item_lines[1]);
             }
         }
 
