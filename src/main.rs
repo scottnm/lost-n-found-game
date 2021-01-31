@@ -1,6 +1,7 @@
 extern crate pancurses;
 
 mod utils {
+    #[derive(Debug, PartialEq, Eq)]
     pub struct Rect {
         pub left: i32,
         pub top: i32,
@@ -9,12 +10,13 @@ mod utils {
     }
 
     impl Rect {
-        pub const fn _right(&self) -> i32 {
+        #[cfg(test)]
+        pub const fn right(&self) -> i32 {
             let right = self.left + self.width - 1;
             right
         }
 
-        pub const fn _bottom(&self) -> i32 {
+        pub const fn bottom(&self) -> i32 {
             let bottom = self.top + self.height - 1;
             bottom
         }
@@ -63,14 +65,61 @@ impl GameGrid {
     }
 }
 
-// Add space between cells in the grid when we render them to the window.
-// That'll just make it easier to see each cell
-fn game_grid_to_window(x: i32, y: i32, grid_left: i32, grid_top: i32) -> (i32, i32) {
-    (x * 2 + grid_left, y * 2 + grid_top)
-}
+// helpers for transforming from one coordinate space to another
+mod xform {
+    use super::*;
 
-fn window_to_game_grid(x: i32, y: i32, grid_left: i32, grid_top: i32) -> (i32, i32) {
-    ((x - grid_left) / 2, (y - grid_top) / 2)
+    // the game-grid-coord-space is just a contiguous 2D array where it's origin always lies at zero
+    // the window-coord-space accounts for where those grid cells are actually rendered on screen.
+    // The on-screen grid resembles this pattern:
+    //  ___ ___ ___
+    // |   |   |   |
+    // |___|___|___|
+    // |   |   |   |
+    // |___|___|___|
+    // |   |   |   |
+    // |___|___|___|
+    //
+    //
+    // where a single game-grid cell actually comprises of a 3x2 block of window cells/chars.
+    // Addiitionally it's important to remember that the grid may (will) be offset within the window.
+
+    // Add space between cells in the grid when we render them to the window.
+    // That'll just make it easier to see each cell
+    pub fn game_grid_to_window(x: i32, y: i32, grid_left: i32, grid_top: i32) -> Rect {
+        // To calculate the horizontal range of cells in the window...
+        // 1. account for the grids left offset (where is the grid rendered in the window)
+        // 2. account for the leading vertical border cell
+        // 3. skip 3 cell spaces and the next vertical bar for every grid cell you move right
+        let window_left = grid_left + 1 + (3 + 1) * x;
+
+        // To calculate the vertical range of cells in the window...
+        // 1. account for the grids top offset (where is the grid rendered in the window)
+        // 2. account for the leading horizontal border cell
+        // 3. skip 2 cell spaces (the second cell space also includes the next horizontal border)
+        let window_top = grid_top + 1 + 2 * y;
+
+        // every grid cell in the window is a 2x2 cell of characters
+        let width = 3;
+        let height = 2;
+
+        Rect {
+            left: window_left,
+            top: window_top,
+            width,
+            height,
+        }
+    }
+
+    pub fn window_to_game_grid(x: i32, y: i32, grid_left: i32, grid_top: i32) -> (i32, i32) {
+        // first shift our window position so that our grid is aligned at the origin
+        // additionally subtract an additional 1 to account for the grid border
+        let window_at_origin = (x - grid_left - 1, y - grid_top - 1);
+
+        // finally divide the x portion by 4 (3 cells + a border)
+        // and divide the y portion by 2 (2 cells one of which includes the next border)
+        (window_at_origin.0 / 4, window_at_origin.1 / 2)
+    }
 }
 
 fn setup_pancurses_mouse() {
@@ -117,8 +166,6 @@ fn main() {
 
     let mut last_clicked_cell = None;
 
-    let bkgd_char = window.getbkgd();
-
     loop {
         // If we get a mouse event, update our mouse state
         if let Some(pancurses::Input::KeyMouse) = window.getch() {
@@ -135,10 +182,12 @@ fn main() {
         let mouse_state_str = format!("{:?}", mouse_state);
 
         // convert the mouse position to an item in a grid cell
-        let grid_pos = window_to_game_grid(mouse_state.x, mouse_state.y, grid_left, grid_top);
+        let grid_pos =
+            xform::window_to_game_grid(mouse_state.x, mouse_state.y, grid_left, grid_top);
+        let hovered_over_grid_item = game_grid.item(grid_pos.0, grid_pos.1);
         if mouse_state.click {
             mouse_state.click = false;
-            last_clicked_cell = game_grid.item(grid_pos.0, grid_pos.1);
+            last_clicked_cell = hovered_over_grid_item.clone();
         }
 
         // use erase instead of clear
@@ -148,26 +197,37 @@ fn main() {
         window.mvaddstr(0, 0, mouse_state_str);
         window.mvaddstr(1, 0, format!("{:?}", last_clicked_cell));
 
+        // add the leading border cells on top of the grid
+        for col in 0..game_grid.width {
+            window.mvaddstr(grid_top, grid_left + 1 + 4 * col, "___");
+        }
+
         // render the grid
         for row in 0..game_grid.height {
-            for col in 0..game_grid.width {
-                let grid_char = if row == 0 {
-                    std::char::from_u32('0' as u32 + (col % 10) as u32).unwrap()
-                } else if col == 0 {
-                    std::char::from_u32('0' as u32 + (row % 10) as u32).unwrap()
-                } else {
-                    'x'
-                };
+            // add the leading border cells for each row
+            window.mvaddch((row * 2) + grid_top + 1, grid_left, '|');
+            window.mvaddch((row * 2) + grid_top + 2, grid_left, '|');
 
-                let (x, y) = game_grid_to_window(col, row, grid_left, grid_top);
-                window.mvaddch(y, x, grid_char);
+            // render each cell
+            for col in 0..game_grid.width {
+                window.mvaddstr((row * 2) + grid_top + 1, grid_left + 1 + 4 * col, "   |");
+                window.mvaddstr((row * 2) + grid_top + 2, grid_left + 1 + 4 * col, "___|");
             }
         }
 
-        // if our mouse is over a grid character, highlight it!
-        let highlight_pos = game_grid_to_window(grid_pos.0, grid_pos.1, grid_left, grid_top);
-        if window.mvinch(highlight_pos.1, highlight_pos.0) != bkgd_char {
-            window.mvchgat(highlight_pos.1, highlight_pos.0, 1, pancurses::A_BLINK, 0);
+        // if we are hovering over a grid cell, highlight the selected cell
+        if hovered_over_grid_item.is_some() {
+            let highlighted_rect =
+                xform::game_grid_to_window(grid_pos.0, grid_pos.1, grid_left, grid_top);
+            for row in highlighted_rect.top..=highlighted_rect.bottom() {
+                window.mvchgat(
+                    row,
+                    highlighted_rect.left,
+                    highlighted_rect.width,
+                    pancurses::A_BLINK,
+                    0,
+                );
+            }
         }
 
         window.refresh();
@@ -183,26 +243,97 @@ mod tests {
 
     #[test]
     fn test_game_grid_to_window() {
-        let offset_left = 1;
-        let offset_top = 5;
-
-        // |-----(1,5)
-        // V
-        // ....
         // ....
         // ...x
-        let input = (3, 2);
+        // ....
+        let input = (3, 1);
 
         // |-----(1,5)
-        // V
-        // . . . .
-        // . . . .
-        // . . . x
-        let expected_result = (7, 9);
+        // V___ ___ ___ ___
+        // |   |   |   |   |
+        // |___|___|___|___|
+        // |   |   |   |xxx|
+        // |___|___|___|___|
+        // |   |   |   |   |
+        // |___|___|___|___|
+        let offset_left = 1;
+        let offset_top = 5;
+        let expected_result = Rect {
+            left: 14,
+            top: 8,
+            width: 3,
+            height: 2,
+        };
 
         assert_eq!(
             expected_result,
-            game_grid_to_window(input.0, input.1, offset_left, offset_top)
-        )
+            xform::game_grid_to_window(input.0, input.1, offset_left, offset_top)
+        );
+    }
+
+    #[test]
+    fn test_window_to_game_grid() {
+        // |-----(4,2)
+        // V___ ___ ___ ___
+        // |   |   |   |   |
+        // |___|___|___|___|
+        // |   |   |   |   |
+        // |___|___|__x|___|
+        // |   |   |   |   |
+        // |___|___|___|___|
+        let offset_left = 4;
+        let offset_top = 2;
+        let input = (15, 6);
+
+        // ....
+        // ..x.
+        // ....
+        let expected_result = (2, 1);
+
+        assert_eq!(
+            expected_result,
+            xform::window_to_game_grid(input.0, input.1, offset_left, offset_top)
+        );
+    }
+
+    #[test]
+    fn test_game_grid_to_window_to_game_grid() {
+        // ....
+        // ....
+        // .x..
+        let input = (1, 2);
+
+        // |-----(6,7)
+        // V___ ___ ___ ___
+        // |   |   |   |   |
+        // |___|___|___|___|
+        // |   |   |   |   |
+        // |___|___|___|___|
+        // |   |xxx|   |   |
+        // |___|___|___|___|
+        let offset_left = 6;
+        let offset_top = 7;
+        let expected_result = Rect {
+            left: 11,
+            top: 12,
+            width: 3,
+            height: 2,
+        };
+
+        // First verify that we calculated the correct range of cells
+        assert_eq!(
+            expected_result,
+            xform::game_grid_to_window(input.0, input.1, offset_left, offset_top)
+        );
+
+        // Next verify that each cell in that range maps back to our input
+        for row in expected_result.top..=expected_result.bottom() {
+            for col in expected_result.left..=expected_result.right() {
+                assert_eq!(
+                    input,
+                    xform::window_to_game_grid(col, row, offset_left, offset_top)
+                );
+            }
+        }
     }
 }
