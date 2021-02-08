@@ -7,7 +7,7 @@ A quick puzzle game for GGJ21
 * [X] render a grid
 * [X] support clicking on items in the grid
 * [X] support generating a solution cell and hint cells
-* [ ] support hinding solution cells and hint cells and only reveal cells when clicked
+* [X] support hiding solution cells and hint cells and only reveal cells when clicked
 * [ ] support "winning" by finding the solution cells
 * [ ] support starting a new game after winning the last game
 * [ ] add a game timer and support losing if you don't solve a board in time

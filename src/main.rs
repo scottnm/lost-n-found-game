@@ -55,8 +55,14 @@ mod game {
         Hint(HintDir),
     }
 
+    #[derive(Debug, Clone, Copy)]
+    pub struct GridCell {
+        pub item: GridItem,
+        pub revealed: bool,
+    }
+
     pub struct GameGrid {
-        data: Box<[GridItem]>,
+        data: Box<[GridCell]>,
         width: i32,
         height: i32,
     }
@@ -91,7 +97,7 @@ mod game {
 
                     let x_displacement = col - solution_cell.0;
                     let y_displacement = row - solution_cell.1;
-                    let cell = {
+                    let item = {
                         if x_displacement == 0 && y_displacement == 0 {
                             GridItem::Solution
                         } else {
@@ -101,7 +107,10 @@ mod game {
                         }
                     };
 
-                    data.push(cell);
+                    data.push(GridCell {
+                        item,
+                        revealed: false,
+                    });
                 }
             }
 
@@ -120,13 +129,22 @@ mod game {
             self.height
         }
 
-        pub fn item(&self, x: i32, y: i32) -> Option<GridItem> {
+        pub fn item(&self, x: i32, y: i32) -> Option<GridCell> {
             if x < 0 || x >= self.width || y < 0 || y >= self.height {
                 return None;
             }
 
             let index = (self.width * y + x) as usize;
             Some(self.data[index])
+        }
+
+        pub fn mut_item(&mut self, x: i32, y: i32) -> Option<&mut GridCell> {
+            if x < 0 || x >= self.width || y < 0 || y >= self.height {
+                return None;
+            }
+
+            let index = (self.width * y + x) as usize;
+            Some(&mut self.data[index])
         }
     }
 }
@@ -196,6 +214,59 @@ fn setup_pancurses_mouse() {
     pancurses::mousemask(mousemask, &mut oldmask);
 }
 
+enum Color {
+    Green,
+    Yellow,
+    Magenta,
+    Cyan,
+    BlackOnWhite,
+}
+
+impl Color {
+    fn to_num(&self) -> u8 {
+        match self {
+            Color::Green => 1,
+            Color::Yellow => 2,
+            Color::Magenta => 3,
+            Color::Cyan => 4,
+            Color::BlackOnWhite => 5,
+        }
+    }
+
+    fn setup() {
+        pancurses::start_color();
+        pancurses::init_pair(
+            Color::Green.to_num() as i16,
+            pancurses::COLOR_GREEN,
+            pancurses::COLOR_BLACK,
+        );
+        pancurses::init_pair(
+            Color::Yellow.to_num() as i16,
+            pancurses::COLOR_YELLOW,
+            pancurses::COLOR_BLACK,
+        );
+        pancurses::init_pair(
+            Color::Cyan.to_num() as i16,
+            pancurses::COLOR_CYAN,
+            pancurses::COLOR_BLACK,
+        );
+        pancurses::init_pair(
+            Color::Magenta.to_num() as i16,
+            pancurses::COLOR_MAGENTA,
+            pancurses::COLOR_BLACK,
+        );
+        pancurses::init_pair(
+            Color::BlackOnWhite.to_num() as i16,
+            pancurses::COLOR_BLACK,
+            pancurses::COLOR_WHITE,
+        );
+    }
+
+    pub fn to_color_pair(&self) -> pancurses::chtype {
+        pancurses::COLOR_PAIR(self.to_num() as pancurses::chtype)
+    }
+}
+
 fn main() {
     let window = pancurses::initscr();
     pancurses::noecho(); // prevent key inputs rendering to the screen
@@ -214,9 +285,11 @@ fn main() {
     };
     pancurses::resize_term(WIN.height, WIN.width);
 
+    Color::setup();
+
     // Not using a Rect because this grid isn't ACTUALLY sized normally like a rect. There are spaces
     let mut rng = ThreadRangeRng::new();
-    let game_grid = GameGrid::new(25, 20, &mut rng);
+    let mut game_grid = GameGrid::new(25, 20, &mut rng);
     let grid_left = (WIN.width - game_grid.width() * 2) / 2;
     let grid_top = (WIN.height - game_grid.height() * 2) / 2;
 
@@ -233,7 +306,7 @@ fn main() {
         y: 0,
     };
 
-    let mut last_clicked_cell = None;
+    let mut last_clicked_cell: Option<GridCell> = None;
 
     loop {
         // If we get a mouse event, update our mouse state
@@ -253,11 +326,23 @@ fn main() {
         // convert the mouse position to an item in a grid cell
         let grid_pos =
             xform::window_to_game_grid(mouse_state.x, mouse_state.y, grid_left, grid_top);
-        let hovered_over_grid_item = game_grid.item(grid_pos.0, grid_pos.1);
-        if mouse_state.click {
-            mouse_state.click = false;
-            last_clicked_cell = hovered_over_grid_item.clone();
-        }
+        let hovered_over_grid_item: Option<GridCell> = {
+            let hovered_over_grid_item = game_grid.mut_item(grid_pos.0, grid_pos.1);
+            if mouse_state.click {
+                mouse_state.click = false;
+                // FIXME: ugh why is this necessary to use an optional mutable ref???
+                if let Some(&mut ref mut item) = hovered_over_grid_item {
+                    item.revealed = true;
+                }
+
+                if let Some(&mut ref mut item) = hovered_over_grid_item {
+                    last_clicked_cell = Some(item.clone())
+                } else {
+                    last_clicked_cell = None
+                }
+            }
+            hovered_over_grid_item.copied()
+        };
 
         // use erase instead of clear
         window.erase();
@@ -282,19 +367,28 @@ fn main() {
             for col in 0..game_grid.width() {
                 let col_offset = grid_left + 1 + 4 * col;
                 // safe to unwrap since we are iterating over the grid by its own bounds
-                let grid_item = game_grid.item(col, row).unwrap();
-                let grid_item_lines = match grid_item {
-                    GridItem::Solution => ["   |", "___|"],
-                    GridItem::Hint(hint_dir) => match hint_dir {
-                        HintDir::Left => ["<--|", "___|"],
-                        HintDir::Right => ["-->|", "___|"],
-                        HintDir::Up => [" ^ |", "_|_|"],
-                        HintDir::Down => [" | |", "_V_|"],
-                    },
+                let grid_cell = game_grid.item(col, row).unwrap();
+                let (grid_item_lines, grid_item_attributes) = if grid_cell.revealed {
+                    match grid_cell.item {
+                        GridItem::Solution => {
+                            (["***|", "***|"], Color::BlackOnWhite.to_color_pair())
+                        }
+                        GridItem::Hint(hint_dir) => match hint_dir {
+                            HintDir::Left => (["<--|", "___|"], Color::Cyan.to_color_pair()),
+                            HintDir::Right => (["-->|", "___|"], Color::Yellow.to_color_pair()),
+                            HintDir::Up => ([" ^ |", "_|_|"], Color::Magenta.to_color_pair()),
+                            HintDir::Down => ([" | |", "_V_|"], Color::Green.to_color_pair()),
+                        },
+                    }
+                } else {
+                    (["   |", "___|"], pancurses::A_NORMAL)
                 };
 
+                window.attron(grid_item_attributes);
                 window.mvaddstr(row_offset, col_offset, grid_item_lines[0]);
                 window.mvaddstr(row_offset + 1, col_offset, grid_item_lines[1]);
+                window.attroff(grid_item_attributes);
+                window.attroff(pancurses::A_BLINK);
             }
         }
 
