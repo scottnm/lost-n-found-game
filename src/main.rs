@@ -24,11 +24,11 @@ mod utils {
             bottom
         }
 
-        pub const fn _center_x(&self) -> i32 {
+        pub const fn center_x(&self) -> i32 {
             self.left + self.width / 2
         }
 
-        pub const fn _center_y(&self) -> i32 {
+        pub const fn center_y(&self) -> i32 {
             self.top + self.height / 2
         }
     }
@@ -286,12 +286,24 @@ fn main() {
     pancurses::resize_term(WIN.height, WIN.width);
 
     Color::setup();
+    loop {
+        run_game(&window);
+    }
+}
 
+fn run_game(window: &pancurses::Window) {
     // Not using a Rect because this grid isn't ACTUALLY sized normally like a rect. There are spaces
     let mut rng = ThreadRangeRng::new();
     let mut game_grid = GameGrid::new(25, 20, &mut rng);
-    let grid_left = (WIN.width - game_grid.width() * 2) / 2;
-    let grid_top = (WIN.height - game_grid.height() * 2) / 2;
+
+    let center_cell_range =
+        xform::game_grid_to_window(game_grid.width() / 2, game_grid.height() / 2, 0, 0);
+    let grid_left = (window.get_max_x() / 2) - center_cell_range.center_x();
+    let grid_top = (window.get_max_y() / 2) - center_cell_range.center_y();
+    let grid_center = (
+        grid_left + center_cell_range.center_x(),
+        grid_top + center_cell_range.center_y(),
+    );
 
     #[derive(Debug)]
     struct MouseState {
@@ -307,8 +319,12 @@ fn main() {
     };
 
     let mut last_clicked_cell: Option<GridCell> = None;
+    let mut board_finished_timer: Option<std::time::Instant> = None;
+    const BOARD_FINISH_MSG_TIME: std::time::Duration = std::time::Duration::from_secs(5);
 
-    loop {
+    while board_finished_timer.is_none()
+        || board_finished_timer.unwrap().elapsed() < BOARD_FINISH_MSG_TIME
+    {
         // If we get a mouse event, update our mouse state
         if let Some(pancurses::Input::KeyMouse) = window.getch() {
             if let Ok(mouse_event) = pancurses::getmouse() {
@@ -326,22 +342,28 @@ fn main() {
         // convert the mouse position to an item in a grid cell
         let grid_pos =
             xform::window_to_game_grid(mouse_state.x, mouse_state.y, grid_left, grid_top);
-        let hovered_over_grid_item: Option<GridCell> = {
-            let hovered_over_grid_item = game_grid.mut_item(grid_pos.0, grid_pos.1);
+        let hovered_over_grid_cell: Option<GridCell> = {
+            let hovered_over_grid_cell = game_grid.mut_item(grid_pos.0, grid_pos.1);
             if mouse_state.click {
                 mouse_state.click = false;
                 // FIXME: ugh why is this necessary to use an optional mutable ref???
-                if let Some(&mut ref mut item) = hovered_over_grid_item {
+                if let Some(&mut ref mut item) = hovered_over_grid_cell {
                     item.revealed = true;
                 }
 
-                if let Some(&mut ref mut item) = hovered_over_grid_item {
-                    last_clicked_cell = Some(item.clone())
+                if let Some(&mut ref mut cell) = hovered_over_grid_cell {
+                    if board_finished_timer.is_none() {
+                        if let GridItem::Solution = cell.item {
+                            board_finished_timer = Some(std::time::Instant::now());
+                        }
+                    }
+
+                    last_clicked_cell = Some(cell.clone())
                 } else {
                     last_clicked_cell = None
                 }
             }
-            hovered_over_grid_item.copied()
+            hovered_over_grid_cell.copied()
         };
 
         // use erase instead of clear
@@ -393,7 +415,7 @@ fn main() {
         }
 
         // if we are hovering over a grid cell, highlight the selected cell
-        if hovered_over_grid_item.is_some() {
+        if hovered_over_grid_cell.is_some() {
             let highlighted_rect =
                 xform::game_grid_to_window(grid_pos.0, grid_pos.1, grid_left, grid_top);
             for row in highlighted_rect.top..=highlighted_rect.bottom() {
@@ -405,6 +427,32 @@ fn main() {
                     0,
                 );
             }
+        }
+
+        if board_finished_timer.is_some() {
+            const GAME_OVER_TEXT: &str = "Success!";
+            let elapsed_time = board_finished_timer.unwrap().elapsed();
+            let secs_left = if BOARD_FINISH_MSG_TIME >= elapsed_time {
+                // adjust the time by a half second so that the time reads better.
+                let adjusted_time = BOARD_FINISH_MSG_TIME + std::time::Duration::from_millis(500);
+                (adjusted_time - elapsed_time).as_secs()
+            } else {
+                0
+            };
+            let next_board_text = format!("Next board in... {} secs", secs_left);
+
+            window.attron(pancurses::A_BLINK);
+            window.mvaddstr(
+                grid_center.1,
+                grid_center.0 - (GAME_OVER_TEXT.len() / 2) as i32,
+                GAME_OVER_TEXT,
+            );
+            window.mvaddstr(
+                grid_center.1 + 1,
+                grid_center.0 - (next_board_text.len() / 2) as i32,
+                next_board_text,
+            );
+            window.attroff(pancurses::A_BLINK);
         }
 
         window.refresh();
