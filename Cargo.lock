@@ -34,7 +34,7 @@ name = "lnf"
 version = "0.1.0"
 dependencies = [
  "pancurses",
- "rand",
+ "snm_rand_utils",
 ]
 
 [[package]]
@@ -131,6 +131,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca3129af7b92a17112d59ad498c6f81eaf463253766b90396d39ea7a39d6613c"
 dependencies = [
  "rand_core",
+]
+
+[[package]]
+name = "snm_rand_utils"
+version = "0.1.0"
+source = "git+https://github.com/scottnm/snm_rand_utils?branch=main#4cf6e0b0f7abe6fe8adeae640046e98985b87211"
+dependencies = [
+ "rand",
 ]
 
 [[package]]

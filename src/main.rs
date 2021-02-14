@@ -1,7 +1,7 @@
-mod randwrapper;
 extern crate pancurses;
+extern crate snm_rand_utils;
 
-use crate::randwrapper::*;
+use snm_rand_utils::range_rng::*;
 
 mod utils {
     #[derive(Debug, PartialEq, Eq)]
