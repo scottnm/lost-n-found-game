@@ -267,6 +267,12 @@ impl Color {
     }
 }
 
+#[derive(PartialEq, Eq)]
+enum GameResult {
+    Win,
+    Lose,
+}
+
 fn main() {
     let window = pancurses::initscr();
     pancurses::noecho(); // prevent key inputs rendering to the screen
@@ -287,11 +293,14 @@ fn main() {
 
     Color::setup();
     loop {
-        run_game(&window);
+        let result = run_game(&window);
+        if result == GameResult::Lose {
+            break;
+        }
     }
 }
 
-fn run_game(window: &pancurses::Window) {
+fn run_game(window: &pancurses::Window) -> GameResult {
     // Not using a Rect because this grid isn't ACTUALLY sized normally like a rect. There are spaces
     let mut rng = ThreadRangeRng::new();
     let mut game_grid = GameGrid::new(25, 20, &mut rng);
@@ -317,11 +326,6 @@ fn run_game(window: &pancurses::Window) {
         x: 0,
         y: 0,
     };
-
-    enum GameResult {
-        Win,
-        Lose,
-    }
 
     struct GameOverState {
         result: GameResult,
@@ -487,6 +491,8 @@ fn run_game(window: &pancurses::Window) {
         // Yield for 1/30th of a second. Don't hog that CPU.
         std::thread::sleep(std::time::Duration::from_millis(33));
     }
+
+    game_over_state.unwrap().result
 }
 
 #[cfg(test)]
