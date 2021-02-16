@@ -299,16 +299,37 @@ fn main() {
     }
 }
 
+#[derive(Debug)]
+struct MouseState {
+    click: bool,
+    x: i32,
+    y: i32,
+}
+
+fn get_mouse_update(window: &pancurses::Window) -> Option<MouseState> {
+    if let Some(pancurses::Input::KeyMouse) = window.getch() {
+        if let Ok(mouse_event) = pancurses::getmouse() {
+            return Some(MouseState {
+                click: (mouse_event.bstate & pancurses::BUTTON1_CLICKED) != 0,
+                x: mouse_event.x,
+                y: mouse_event.y,
+            });
+        }
+    }
+
+    None
+}
+
 fn render_game_board(
     game_grid: &GameGrid,
     grid_rect: &Rect,
     window: &pancurses::Window,
-    mouse_state_str: &str,
+    mouse_state: &MouseState,
     mouse_game_grid_pos: (i32, i32),
     last_clicked_cell: &Option<GridCell>,
 ) {
     // render the debug mouse info
-    window.mvaddstr(0, 0, mouse_state_str);
+    window.mvaddstr(0, 0, format!("{:?}", mouse_state));
     window.mvaddstr(1, 0, format!("{:?}", last_clicked_cell));
 
     // add the leading border cells on top of the grid
@@ -387,13 +408,6 @@ fn run_game(window: &pancurses::Window) -> GameResult {
         height: grid_bounds.bottom(),
     };
 
-    #[derive(Debug)]
-    struct MouseState {
-        click: bool,
-        x: i32,
-        y: i32,
-    };
-
     let mut mouse_state = MouseState {
         click: false,
         x: 0,
@@ -406,63 +420,49 @@ fn run_game(window: &pancurses::Window) -> GameResult {
     }
 
     const BOARD_FINISH_MSG_TIME: std::time::Duration = std::time::Duration::from_secs(5);
-    let mut game_over_state: Option<GameOverState> = None;
 
     let game_time_limit = std::time::Duration::from_secs(10);
     let game_start_time = std::time::Instant::now();
 
     let mut last_clicked_cell: Option<GridCell> = None;
 
-    while game_over_state.is_none()
-        || game_over_state.as_ref().unwrap().msg_timer.elapsed() < BOARD_FINISH_MSG_TIME
-    {
-        // If we get a mouse event, update our mouse state
-        if let Some(pancurses::Input::KeyMouse) = window.getch() {
-            if let Ok(mouse_event) = pancurses::getmouse() {
-                mouse_state = MouseState {
-                    click: (mouse_event.bstate & pancurses::BUTTON1_CLICKED) != 0,
-                    x: mouse_event.x,
-                    y: mouse_event.y,
-                };
-            }
-        }
+    // Run the core game logic until we hit a game over state
+    let game_over_state = loop {
+        mouse_state.click = false; // clear out any mouse state from the last frame
 
-        // snap the mouse_state_str before I potentially consume the click
-        let mouse_state_str = format!("{:?}", mouse_state);
+        // If we get a mouse event, update our mouse state
+        if let Some(mouse_update) = get_mouse_update(&window) {
+            mouse_state = mouse_update;
+        }
 
         // convert the mouse position to an item in a grid cell
         let grid_pos =
             xform::window_to_game_grid(mouse_state.x, mouse_state.y, grid_rect.left, grid_rect.top);
-        let hovered_over_grid_cell = game_grid.mut_item(grid_pos.0, grid_pos.1);
         if mouse_state.click {
-            mouse_state.click = false;
-            // FIXME: ugh why is this necessary to use an optional mutable ref???
-            if let Some(&mut ref mut item) = hovered_over_grid_cell {
-                item.revealed = true;
-            }
+            let hovered_over_grid_cell = game_grid.mut_item(grid_pos.0, grid_pos.1);
 
-            if let Some(&mut ref mut cell) = hovered_over_grid_cell {
-                if game_over_state.is_none() {
+            match hovered_over_grid_cell {
+                Some(cell) => {
+                    cell.revealed = true;
+                    last_clicked_cell = Some(cell.clone());
+
                     if let GridItem::Solution = cell.item {
-                        game_over_state = Some(GameOverState {
+                        break GameOverState {
                             result: GameResult::Win,
                             msg_timer: std::time::Instant::now(),
-                        });
+                        };
                     }
                 }
-
-                last_clicked_cell = Some(cell.clone())
-            } else {
-                last_clicked_cell = None
+                None => last_clicked_cell = None,
             }
         }
 
         // check for the lose state
-        if game_over_state.is_none() && game_start_time.elapsed() > game_time_limit {
-            game_over_state = Some(GameOverState {
+        if game_start_time.elapsed() > game_time_limit {
+            break GameOverState {
                 result: GameResult::Lose,
                 msg_timer: std::time::Instant::now(),
-            });
+            };
         }
 
         // use erase instead of clear
@@ -472,38 +472,67 @@ fn run_game(window: &pancurses::Window) -> GameResult {
             &game_grid,
             &grid_rect,
             &window,
-            &mouse_state_str,
+            &mouse_state,
             grid_pos,
             &last_clicked_cell,
         );
 
-        if let Some(game_over) = game_over_state.as_ref() {
-            let game_over_text = match game_over.result {
-                GameResult::Lose => "Failed! Exiting in...",
-                GameResult::Win => "Success! Next board in...",
-            };
+        window.refresh();
 
-            let elapsed_time = game_over.msg_timer.elapsed();
-            let secs_left = if BOARD_FINISH_MSG_TIME >= elapsed_time {
-                // adjust the time by a half second so that the time reads better.
-                let adjusted_time = BOARD_FINISH_MSG_TIME + std::time::Duration::from_millis(500);
-                (adjusted_time - elapsed_time).as_secs()
-            } else {
-                0
-            };
+        // Yield for 1/30th of a second. Don't hog that CPU.
+        std::thread::sleep(std::time::Duration::from_millis(33));
+    };
 
-            let time_text = format!("{} secs", secs_left);
+    // After hitting a game over, just continue to render the board until the game over timer elapses
+    while game_over_state.msg_timer.elapsed() < BOARD_FINISH_MSG_TIME {
+        mouse_state.click = false; // clear out any mouse state from the last frame
 
-            window.attron(pancurses::A_BLINK);
-            for (i, text) in [game_over_text, &time_text].iter().enumerate() {
-                window.mvaddstr(
-                    grid_rect.center_y() + (i as i32),
-                    grid_rect.center_x() - (text.len() / 2) as i32,
-                    text,
-                );
-            }
-            window.attroff(pancurses::A_BLINK);
+        // If we get a mouse event, update our mouse state
+        if let Some(mouse_update) = get_mouse_update(&window) {
+            mouse_state = mouse_update;
         }
+
+        // convert the mouse position to an item in a grid cell
+        let grid_pos =
+            xform::window_to_game_grid(mouse_state.x, mouse_state.y, grid_rect.left, grid_rect.top);
+
+        // use erase instead of clear
+        window.erase();
+
+        render_game_board(
+            &game_grid,
+            &grid_rect,
+            &window,
+            &mouse_state,
+            grid_pos,
+            &last_clicked_cell,
+        );
+
+        let game_over_text = match game_over_state.result {
+            GameResult::Lose => "Failed! Exiting in...",
+            GameResult::Win => "Success! Next board in...",
+        };
+
+        let elapsed_time = game_over_state.msg_timer.elapsed();
+        let secs_left = if BOARD_FINISH_MSG_TIME >= elapsed_time {
+            // adjust the time by a half second so that the time reads better.
+            let adjusted_time = BOARD_FINISH_MSG_TIME + std::time::Duration::from_millis(500);
+            (adjusted_time - elapsed_time).as_secs()
+        } else {
+            0
+        };
+
+        let time_text = format!("{} secs", secs_left);
+
+        window.attron(pancurses::A_BLINK);
+        for (i, text) in [game_over_text, &time_text].iter().enumerate() {
+            window.mvaddstr(
+                grid_rect.center_y() + (i as i32),
+                grid_rect.center_x() - (text.len() / 2) as i32,
+                text,
+            );
+        }
+        window.attroff(pancurses::A_BLINK);
 
         window.refresh();
 
@@ -511,7 +540,7 @@ fn run_game(window: &pancurses::Window) -> GameResult {
         std::thread::sleep(std::time::Duration::from_millis(33));
     }
 
-    game_over_state.unwrap().result
+    game_over_state.result
 }
 
 #[cfg(test)]
