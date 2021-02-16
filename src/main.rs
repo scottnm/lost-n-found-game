@@ -300,6 +300,7 @@ enum GameResult {
 struct GameOverState {
     result: GameResult,
     msg_timer: Timer,
+    frozen_game_time: std::time::Duration,
 }
 
 fn main() {
@@ -496,72 +497,63 @@ fn run_game(window: &pancurses::Window) -> GameResult {
 
     let game_timer = Timer::new(std::time::Duration::from_secs(10));
 
-    // Run the core game logic until we hit a game over state
-    let game_over_state = loop {
+    let mut game_over_state: Option<GameOverState> = None;
+    while game_over_state.is_none() || !game_over_state.as_ref().unwrap().msg_timer.finished() {
         // If we get a mouse event, update our mouse state
         mouse_state.click = false; // clear out any mouse state from the last frame
         if let Some(mouse_update) = get_mouse_update(&window) {
             mouse_state = mouse_update;
         }
 
-        if mouse_state.click {
-            // convert the mouse position to an item in a grid cell
-            let grid_pos = xform::window_to_game_grid(
-                mouse_state.x,
-                mouse_state.y,
-                grid_rect.left,
-                grid_rect.top,
-            );
+        // Update the board and check if we've triggered a game over
+        if game_over_state.is_none() {
+            // check for the lose state
+            if game_timer.finished() {
+                game_over_state = Some(GameOverState {
+                    result: GameResult::Lose,
+                    msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
+                    frozen_game_time: game_timer.time_left(),
+                });
+            }
+            // check if our last input triggered a win state
+            else if mouse_state.click {
+                // convert the mouse position to an item in a grid cell
+                let grid_pos = xform::window_to_game_grid(
+                    mouse_state.x,
+                    mouse_state.y,
+                    grid_rect.left,
+                    grid_rect.top,
+                );
 
-            let hovered_over_grid_cell = game_grid.mut_item(grid_pos.0, grid_pos.1);
+                let hovered_over_grid_cell = game_grid.mut_item(grid_pos.0, grid_pos.1);
 
-            if let Some(cell) = hovered_over_grid_cell {
-                cell.revealed = true;
+                if let Some(cell) = hovered_over_grid_cell {
+                    cell.revealed = true;
 
-                if let GridItem::Solution = cell.item {
-                    break GameOverState {
-                        result: GameResult::Win,
-                        msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
-                    };
+                    if let GridItem::Solution = cell.item {
+                        game_over_state = Some(GameOverState {
+                            result: GameResult::Win,
+                            msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
+                            frozen_game_time: game_timer.time_left(),
+                        });
+                    }
                 }
             }
         }
 
-        // check for the lose state
-        if game_timer.finished() {
-            break GameOverState {
-                result: GameResult::Lose,
-                msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
-            };
-        }
-
         // use erase instead of clear
         window.erase();
 
-        render_game_timer(game_timer.time_left(), &time_rect, &window);
+        let game_time_remaining = match &game_over_state {
+            Some(game_over) => game_over.frozen_game_time,
+            None => game_timer.time_left(),
+        };
+        render_game_timer(game_time_remaining, &time_rect, &window);
         render_game_board(&game_grid, &grid_rect, &window, &mouse_state);
 
-        window.refresh();
-
-        // Yield for 1/30th of a second. Don't hog that CPU.
-        std::thread::sleep(std::time::Duration::from_millis(33));
-    };
-
-    // After hitting a game over, just continue to render the board until the game over timer elapses
-    let frozen_game_time = game_timer.time_left();
-    while !game_over_state.msg_timer.finished() {
-        // If we get a mouse event, update our mouse state
-        mouse_state.click = false; // clear out any mouse state from the last frame
-        if let Some(mouse_update) = get_mouse_update(&window) {
-            mouse_state = mouse_update;
+        if let Some(game_over) = &game_over_state {
+            render_game_over_text(game_over, &window, &grid_rect);
         }
-
-        // use erase instead of clear
-        window.erase();
-
-        render_game_timer(frozen_game_time, &time_rect, &window);
-        render_game_board(&game_grid, &grid_rect, &window, &mouse_state);
-        render_game_over_text(&game_over_state, &window, &grid_rect);
 
         window.refresh();
 
@@ -569,7 +561,7 @@ fn run_game(window: &pancurses::Window) -> GameResult {
         std::thread::sleep(std::time::Duration::from_millis(33));
     }
 
-    game_over_state.result
+    game_over_state.unwrap().result
 }
 
 #[cfg(test)]
