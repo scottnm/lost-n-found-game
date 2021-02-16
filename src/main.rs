@@ -331,6 +331,9 @@ fn run_game(window: &pancurses::Window) {
     const BOARD_FINISH_MSG_TIME: std::time::Duration = std::time::Duration::from_secs(5);
     let mut game_over_state: Option<GameOverState> = None;
 
+    let game_time_limit = std::time::Duration::from_secs(10);
+    let game_start_time = std::time::Instant::now();
+
     let mut last_clicked_cell: Option<GridCell> = None;
 
     while game_over_state.is_none()
@@ -379,6 +382,14 @@ fn run_game(window: &pancurses::Window) {
             }
             hovered_over_grid_cell.copied()
         };
+
+        // check for the lose state
+        if game_over_state.is_none() && game_start_time.elapsed() > game_time_limit {
+            game_over_state = Some(GameOverState {
+                result: GameResult::Lose,
+                msg_timer: std::time::Instant::now(),
+            });
+        }
 
         // use erase instead of clear
         window.erase();
