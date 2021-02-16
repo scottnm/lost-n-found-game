@@ -504,10 +504,15 @@ fn run_game(window: &pancurses::Window) -> GameResult {
             mouse_state = mouse_update;
         }
 
-        // convert the mouse position to an item in a grid cell
-        let grid_pos =
-            xform::window_to_game_grid(mouse_state.x, mouse_state.y, grid_rect.left, grid_rect.top);
         if mouse_state.click {
+            // convert the mouse position to an item in a grid cell
+            let grid_pos = xform::window_to_game_grid(
+                mouse_state.x,
+                mouse_state.y,
+                grid_rect.left,
+                grid_rect.top,
+            );
+
             let hovered_over_grid_cell = game_grid.mut_item(grid_pos.0, grid_pos.1);
 
             if let Some(cell) = hovered_over_grid_cell {
@@ -542,9 +547,8 @@ fn run_game(window: &pancurses::Window) -> GameResult {
         std::thread::sleep(std::time::Duration::from_millis(33));
     };
 
-    let frozen_game_time = game_timer.time_left();
-
     // After hitting a game over, just continue to render the board until the game over timer elapses
+    let frozen_game_time = game_timer.time_left();
     while !game_over_state.msg_timer.finished() {
         // If we get a mouse event, update our mouse state
         mouse_state.click = false; // clear out any mouse state from the last frame
