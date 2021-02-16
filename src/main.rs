@@ -325,13 +325,7 @@ fn render_game_board(
     grid_rect: &Rect,
     window: &pancurses::Window,
     mouse_state: &MouseState,
-    mouse_game_grid_pos: (i32, i32),
-    last_clicked_cell: &Option<GridCell>,
 ) {
-    // render the debug mouse info
-    window.mvaddstr(0, 0, format!("{:?}", mouse_state));
-    window.mvaddstr(1, 0, format!("{:?}", last_clicked_cell));
-
     // add the leading border cells on top of the grid
     for col in 0..game_grid.width() {
         window.mvaddstr(grid_rect.top, grid_rect.left + 1 + 4 * col, "___");
@@ -372,6 +366,8 @@ fn render_game_board(
     }
 
     // if we are hovering over a grid cell, highlight the selected cell
+    let mouse_game_grid_pos =
+        xform::window_to_game_grid(mouse_state.x, mouse_state.y, grid_rect.left, grid_rect.top);
     if game_grid
         .item(mouse_game_grid_pos.0, mouse_game_grid_pos.1)
         .is_some()
@@ -424,8 +420,6 @@ fn run_game(window: &pancurses::Window) -> GameResult {
     let game_time_limit = std::time::Duration::from_secs(10);
     let game_start_time = std::time::Instant::now();
 
-    let mut last_clicked_cell: Option<GridCell> = None;
-
     // Run the core game logic until we hit a game over state
     let game_over_state = loop {
         mouse_state.click = false; // clear out any mouse state from the last frame
@@ -441,19 +435,15 @@ fn run_game(window: &pancurses::Window) -> GameResult {
         if mouse_state.click {
             let hovered_over_grid_cell = game_grid.mut_item(grid_pos.0, grid_pos.1);
 
-            match hovered_over_grid_cell {
-                Some(cell) => {
-                    cell.revealed = true;
-                    last_clicked_cell = Some(cell.clone());
+            if let Some(cell) = hovered_over_grid_cell {
+                cell.revealed = true;
 
-                    if let GridItem::Solution = cell.item {
-                        break GameOverState {
-                            result: GameResult::Win,
-                            msg_timer: std::time::Instant::now(),
-                        };
-                    }
+                if let GridItem::Solution = cell.item {
+                    break GameOverState {
+                        result: GameResult::Win,
+                        msg_timer: std::time::Instant::now(),
+                    };
                 }
-                None => last_clicked_cell = None,
             }
         }
 
@@ -468,14 +458,7 @@ fn run_game(window: &pancurses::Window) -> GameResult {
         // use erase instead of clear
         window.erase();
 
-        render_game_board(
-            &game_grid,
-            &grid_rect,
-            &window,
-            &mouse_state,
-            grid_pos,
-            &last_clicked_cell,
-        );
+        render_game_board(&game_grid, &grid_rect, &window, &mouse_state);
 
         window.refresh();
 
@@ -492,21 +475,10 @@ fn run_game(window: &pancurses::Window) -> GameResult {
             mouse_state = mouse_update;
         }
 
-        // convert the mouse position to an item in a grid cell
-        let grid_pos =
-            xform::window_to_game_grid(mouse_state.x, mouse_state.y, grid_rect.left, grid_rect.top);
-
         // use erase instead of clear
         window.erase();
 
-        render_game_board(
-            &game_grid,
-            &grid_rect,
-            &window,
-            &mouse_state,
-            grid_pos,
-            &last_clicked_cell,
-        );
+        render_game_board(&game_grid, &grid_rect, &window, &mouse_state);
 
         let game_over_text = match game_over_state.result {
             GameResult::Lose => "Failed! Exiting in...",
