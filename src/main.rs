@@ -297,6 +297,11 @@ enum GameResult {
     Lose,
 }
 
+struct GameOverState {
+    result: GameResult,
+    msg_timer: Timer,
+}
+
 fn main() {
     let window = pancurses::initscr();
     pancurses::noecho(); // prevent key inputs rendering to the screen
@@ -433,6 +438,34 @@ fn render_game_board(
     }
 }
 
+fn render_game_over_text(
+    game_over_state: &GameOverState,
+    window: &pancurses::Window,
+    grid_rect: &Rect,
+) {
+    let game_over_text = match game_over_state.result {
+        GameResult::Lose => "Failed! Exiting in...",
+        GameResult::Win => "Success! Next board in...",
+    };
+
+    // adjust the time by a half second so that the time reads better.
+    let adjusted_time_left =
+        game_over_state.msg_timer.time_left() + std::time::Duration::from_millis(500);
+    let secs_left = adjusted_time_left.as_secs();
+
+    let time_text = format!("{} secs", secs_left);
+
+    window.attron(pancurses::A_BLINK);
+    for (i, text) in [game_over_text, &time_text].iter().enumerate() {
+        window.mvaddstr(
+            grid_rect.center_y() + (i as i32),
+            grid_rect.center_x() - (text.len() / 2) as i32,
+            text,
+        );
+    }
+    window.attroff(pancurses::A_BLINK);
+}
+
 fn run_game(window: &pancurses::Window) -> GameResult {
     // Not using a Rect because this grid isn't ACTUALLY sized normally like a rect. There are spaces
     let mut rng = ThreadRangeRng::new();
@@ -458,11 +491,6 @@ fn run_game(window: &pancurses::Window) -> GameResult {
         x: 0,
         y: 0,
     };
-
-    struct GameOverState {
-        result: GameResult,
-        msg_timer: Timer,
-    }
 
     const BOARD_FINISH_MSG_TIME: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -529,28 +557,7 @@ fn run_game(window: &pancurses::Window) -> GameResult {
 
         render_game_timer(frozen_game_time, &time_rect, &window);
         render_game_board(&game_grid, &grid_rect, &window, &mouse_state);
-
-        let game_over_text = match game_over_state.result {
-            GameResult::Lose => "Failed! Exiting in...",
-            GameResult::Win => "Success! Next board in...",
-        };
-
-        // adjust the time by a half second so that the time reads better.
-        let adjusted_time_left =
-            game_over_state.msg_timer.time_left() + std::time::Duration::from_millis(500);
-        let secs_left = adjusted_time_left.as_secs();
-
-        let time_text = format!("{} secs", secs_left);
-
-        window.attron(pancurses::A_BLINK);
-        for (i, text) in [game_over_text, &time_text].iter().enumerate() {
-            window.mvaddstr(
-                grid_rect.center_y() + (i as i32),
-                grid_rect.center_x() - (text.len() / 2) as i32,
-                text,
-            );
-        }
-        window.attroff(pancurses::A_BLINK);
+        render_game_over_text(&game_over_state, &window, &grid_rect);
 
         window.refresh();
 
