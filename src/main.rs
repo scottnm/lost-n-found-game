@@ -318,12 +318,23 @@ fn run_game(window: &pancurses::Window) {
         y: 0,
     };
 
-    let mut last_clicked_cell: Option<GridCell> = None;
-    let mut board_finished_timer: Option<std::time::Instant> = None;
-    const BOARD_FINISH_MSG_TIME: std::time::Duration = std::time::Duration::from_secs(5);
+    enum GameResult {
+        Win,
+        Lose,
+    }
 
-    while board_finished_timer.is_none()
-        || board_finished_timer.unwrap().elapsed() < BOARD_FINISH_MSG_TIME
+    struct GameOverState {
+        result: GameResult,
+        msg_timer: std::time::Instant,
+    }
+
+    const BOARD_FINISH_MSG_TIME: std::time::Duration = std::time::Duration::from_secs(5);
+    let mut game_over_state: Option<GameOverState> = None;
+
+    let mut last_clicked_cell: Option<GridCell> = None;
+
+    while game_over_state.is_none()
+        || game_over_state.as_ref().unwrap().msg_timer.elapsed() < BOARD_FINISH_MSG_TIME
     {
         // If we get a mouse event, update our mouse state
         if let Some(pancurses::Input::KeyMouse) = window.getch() {
@@ -352,9 +363,12 @@ fn run_game(window: &pancurses::Window) {
                 }
 
                 if let Some(&mut ref mut cell) = hovered_over_grid_cell {
-                    if board_finished_timer.is_none() {
+                    if game_over_state.is_none() {
                         if let GridItem::Solution = cell.item {
-                            board_finished_timer = Some(std::time::Instant::now());
+                            game_over_state = Some(GameOverState {
+                                result: GameResult::Win,
+                                msg_timer: std::time::Instant::now(),
+                            });
                         }
                     }
 
@@ -429,9 +443,13 @@ fn run_game(window: &pancurses::Window) {
             }
         }
 
-        if board_finished_timer.is_some() {
-            const GAME_OVER_TEXT: &str = "Success!";
-            let elapsed_time = board_finished_timer.unwrap().elapsed();
+        if let Some(game_over) = game_over_state.as_ref() {
+            let game_over_text = match game_over.result {
+                GameResult::Lose => "Failed! Exiting in...",
+                GameResult::Win => "Success! Next board in...",
+            };
+
+            let elapsed_time = game_over.msg_timer.elapsed();
             let secs_left = if BOARD_FINISH_MSG_TIME >= elapsed_time {
                 // adjust the time by a half second so that the time reads better.
                 let adjusted_time = BOARD_FINISH_MSG_TIME + std::time::Duration::from_millis(500);
@@ -439,19 +457,17 @@ fn run_game(window: &pancurses::Window) {
             } else {
                 0
             };
-            let next_board_text = format!("Next board in... {} secs", secs_left);
+
+            let time_text = format!("{} secs", secs_left);
 
             window.attron(pancurses::A_BLINK);
-            window.mvaddstr(
-                grid_center.1,
-                grid_center.0 - (GAME_OVER_TEXT.len() / 2) as i32,
-                GAME_OVER_TEXT,
-            );
-            window.mvaddstr(
-                grid_center.1 + 1,
-                grid_center.0 - (next_board_text.len() / 2) as i32,
-                next_board_text,
-            );
+            for (i, text) in [game_over_text, &time_text].iter().enumerate() {
+                window.mvaddstr(
+                    grid_center.1 + (i as i32),
+                    grid_center.0 - (text.len() / 2) as i32,
+                    text,
+                );
+            }
             window.attroff(pancurses::A_BLINK);
         }
 
