@@ -13,7 +13,6 @@ mod utils {
     }
 
     impl Rect {
-        #[cfg(test)]
         pub const fn right(&self) -> i32 {
             let right = self.left + self.width - 1;
             right
@@ -300,19 +299,93 @@ fn main() {
     }
 }
 
+fn render_game_board(
+    game_grid: &GameGrid,
+    grid_rect: &Rect,
+    window: &pancurses::Window,
+    mouse_state_str: &str,
+    mouse_game_grid_pos: (i32, i32),
+    last_clicked_cell: &Option<GridCell>,
+) {
+    // render the debug mouse info
+    window.mvaddstr(0, 0, mouse_state_str);
+    window.mvaddstr(1, 0, format!("{:?}", last_clicked_cell));
+
+    // add the leading border cells on top of the grid
+    for col in 0..game_grid.width() {
+        window.mvaddstr(grid_rect.top, grid_rect.left + 1 + 4 * col, "___");
+    }
+
+    // render the grid
+    for row in 0..game_grid.height() {
+        let row_offset = (row * 2) + grid_rect.top + 1;
+        // add the leading border cells for each row
+        window.mvaddch(row_offset, grid_rect.left, '|');
+        window.mvaddch(row_offset + 1, grid_rect.left, '|');
+
+        // render each cell
+        for col in 0..game_grid.width() {
+            let col_offset = grid_rect.left + 1 + 4 * col;
+            // safe to unwrap since we are iterating over the grid by its own bounds
+            let grid_cell = game_grid.item(col, row).unwrap();
+            let (grid_item_lines, grid_item_attributes) = if grid_cell.revealed {
+                match grid_cell.item {
+                    GridItem::Solution => (["***|", "***|"], Color::BlackOnWhite.to_color_pair()),
+                    GridItem::Hint(hint_dir) => match hint_dir {
+                        HintDir::Left => (["<--|", "___|"], Color::Cyan.to_color_pair()),
+                        HintDir::Right => (["-->|", "___|"], Color::Yellow.to_color_pair()),
+                        HintDir::Up => ([" ^ |", "_|_|"], Color::Magenta.to_color_pair()),
+                        HintDir::Down => ([" | |", "_V_|"], Color::Green.to_color_pair()),
+                    },
+                }
+            } else {
+                (["   |", "___|"], pancurses::A_NORMAL)
+            };
+
+            window.attron(grid_item_attributes);
+            window.mvaddstr(row_offset, col_offset, grid_item_lines[0]);
+            window.mvaddstr(row_offset + 1, col_offset, grid_item_lines[1]);
+            window.attroff(grid_item_attributes);
+            window.attroff(pancurses::A_BLINK);
+        }
+    }
+
+    // if we are hovering over a grid cell, highlight the selected cell
+    if game_grid
+        .item(mouse_game_grid_pos.0, mouse_game_grid_pos.1)
+        .is_some()
+    {
+        let highlighted_rect = xform::game_grid_to_window(
+            mouse_game_grid_pos.0,
+            mouse_game_grid_pos.1,
+            grid_rect.left,
+            grid_rect.top,
+        );
+
+        for row in highlighted_rect.top..=highlighted_rect.bottom() {
+            window.mvchgat(
+                row,
+                highlighted_rect.left,
+                highlighted_rect.width,
+                pancurses::A_BLINK,
+                0,
+            );
+        }
+    }
+}
+
 fn run_game(window: &pancurses::Window) -> GameResult {
     // Not using a Rect because this grid isn't ACTUALLY sized normally like a rect. There are spaces
     let mut rng = ThreadRangeRng::new();
     let mut game_grid = GameGrid::new(25, 20, &mut rng);
 
-    let center_cell_range =
-        xform::game_grid_to_window(game_grid.width() / 2, game_grid.height() / 2, 0, 0);
-    let grid_left = (window.get_max_x() / 2) - center_cell_range.center_x();
-    let grid_top = (window.get_max_y() / 2) - center_cell_range.center_y();
-    let grid_center = (
-        grid_left + center_cell_range.center_x(),
-        grid_top + center_cell_range.center_y(),
-    );
+    let grid_bounds = xform::game_grid_to_window(game_grid.width(), game_grid.height(), 0, 0);
+    let grid_rect = Rect {
+        left: (window.get_max_x() - grid_bounds.right()) / 2,
+        top: (window.get_max_y() - grid_bounds.bottom()) / 2,
+        width: grid_bounds.right(),
+        height: grid_bounds.bottom(),
+    };
 
     #[derive(Debug)]
     struct MouseState {
@@ -359,33 +432,30 @@ fn run_game(window: &pancurses::Window) -> GameResult {
 
         // convert the mouse position to an item in a grid cell
         let grid_pos =
-            xform::window_to_game_grid(mouse_state.x, mouse_state.y, grid_left, grid_top);
-        let hovered_over_grid_cell: Option<GridCell> = {
-            let hovered_over_grid_cell = game_grid.mut_item(grid_pos.0, grid_pos.1);
-            if mouse_state.click {
-                mouse_state.click = false;
-                // FIXME: ugh why is this necessary to use an optional mutable ref???
-                if let Some(&mut ref mut item) = hovered_over_grid_cell {
-                    item.revealed = true;
-                }
-
-                if let Some(&mut ref mut cell) = hovered_over_grid_cell {
-                    if game_over_state.is_none() {
-                        if let GridItem::Solution = cell.item {
-                            game_over_state = Some(GameOverState {
-                                result: GameResult::Win,
-                                msg_timer: std::time::Instant::now(),
-                            });
-                        }
-                    }
-
-                    last_clicked_cell = Some(cell.clone())
-                } else {
-                    last_clicked_cell = None
-                }
+            xform::window_to_game_grid(mouse_state.x, mouse_state.y, grid_rect.left, grid_rect.top);
+        let hovered_over_grid_cell = game_grid.mut_item(grid_pos.0, grid_pos.1);
+        if mouse_state.click {
+            mouse_state.click = false;
+            // FIXME: ugh why is this necessary to use an optional mutable ref???
+            if let Some(&mut ref mut item) = hovered_over_grid_cell {
+                item.revealed = true;
             }
-            hovered_over_grid_cell.copied()
-        };
+
+            if let Some(&mut ref mut cell) = hovered_over_grid_cell {
+                if game_over_state.is_none() {
+                    if let GridItem::Solution = cell.item {
+                        game_over_state = Some(GameOverState {
+                            result: GameResult::Win,
+                            msg_timer: std::time::Instant::now(),
+                        });
+                    }
+                }
+
+                last_clicked_cell = Some(cell.clone())
+            } else {
+                last_clicked_cell = None
+            }
+        }
 
         // check for the lose state
         if game_over_state.is_none() && game_start_time.elapsed() > game_time_limit {
@@ -398,65 +468,14 @@ fn run_game(window: &pancurses::Window) -> GameResult {
         // use erase instead of clear
         window.erase();
 
-        // render the debug mouse info
-        window.mvaddstr(0, 0, mouse_state_str);
-        window.mvaddstr(1, 0, format!("{:?}", last_clicked_cell));
-
-        // add the leading border cells on top of the grid
-        for col in 0..game_grid.width() {
-            window.mvaddstr(grid_top, grid_left + 1 + 4 * col, "___");
-        }
-
-        // render the grid
-        for row in 0..game_grid.height() {
-            let row_offset = (row * 2) + grid_top + 1;
-            // add the leading border cells for each row
-            window.mvaddch(row_offset, grid_left, '|');
-            window.mvaddch(row_offset + 1, grid_left, '|');
-
-            // render each cell
-            for col in 0..game_grid.width() {
-                let col_offset = grid_left + 1 + 4 * col;
-                // safe to unwrap since we are iterating over the grid by its own bounds
-                let grid_cell = game_grid.item(col, row).unwrap();
-                let (grid_item_lines, grid_item_attributes) = if grid_cell.revealed {
-                    match grid_cell.item {
-                        GridItem::Solution => {
-                            (["***|", "***|"], Color::BlackOnWhite.to_color_pair())
-                        }
-                        GridItem::Hint(hint_dir) => match hint_dir {
-                            HintDir::Left => (["<--|", "___|"], Color::Cyan.to_color_pair()),
-                            HintDir::Right => (["-->|", "___|"], Color::Yellow.to_color_pair()),
-                            HintDir::Up => ([" ^ |", "_|_|"], Color::Magenta.to_color_pair()),
-                            HintDir::Down => ([" | |", "_V_|"], Color::Green.to_color_pair()),
-                        },
-                    }
-                } else {
-                    (["   |", "___|"], pancurses::A_NORMAL)
-                };
-
-                window.attron(grid_item_attributes);
-                window.mvaddstr(row_offset, col_offset, grid_item_lines[0]);
-                window.mvaddstr(row_offset + 1, col_offset, grid_item_lines[1]);
-                window.attroff(grid_item_attributes);
-                window.attroff(pancurses::A_BLINK);
-            }
-        }
-
-        // if we are hovering over a grid cell, highlight the selected cell
-        if hovered_over_grid_cell.is_some() {
-            let highlighted_rect =
-                xform::game_grid_to_window(grid_pos.0, grid_pos.1, grid_left, grid_top);
-            for row in highlighted_rect.top..=highlighted_rect.bottom() {
-                window.mvchgat(
-                    row,
-                    highlighted_rect.left,
-                    highlighted_rect.width,
-                    pancurses::A_BLINK,
-                    0,
-                );
-            }
-        }
+        render_game_board(
+            &game_grid,
+            &grid_rect,
+            &window,
+            &mouse_state_str,
+            grid_pos,
+            &last_clicked_cell,
+        );
 
         if let Some(game_over) = game_over_state.as_ref() {
             let game_over_text = match game_over.result {
@@ -478,8 +497,8 @@ fn run_game(window: &pancurses::Window) -> GameResult {
             window.attron(pancurses::A_BLINK);
             for (i, text) in [game_over_text, &time_text].iter().enumerate() {
                 window.mvaddstr(
-                    grid_center.1 + (i as i32),
-                    grid_center.0 - (text.len() / 2) as i32,
+                    grid_rect.center_y() + (i as i32),
+                    grid_rect.center_x() - (text.len() / 2) as i32,
                     text,
                 );
             }
