@@ -10,7 +10,7 @@ A quick puzzle game for GGJ21
 * [X] support hiding solution cells and hint cells and only reveal cells when clicked
 * [X] support "winning" by finding the solution cells
 * [X] support starting a new game after winning the last game
-* [ ] add a game timer and support losing if you don't solve a board in time
+* [X] add a game timer and support losing if you don't solve a board in time
 * [ ] support levels increasing in difficulty by reducing the time for harder levels
 * [ ] support hint cells "re-hiding" to increase difficulty
 * [ ] support hint cells "re-hiding" faster to increase difficulty on harder levels

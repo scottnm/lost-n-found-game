@@ -13,7 +13,6 @@ mod utils {
     }
 
     impl Rect {
-        #[cfg(test)]
         pub const fn right(&self) -> i32 {
             let right = self.left + self.width - 1;
             right
@@ -32,9 +31,34 @@ mod utils {
             self.top + self.height / 2
         }
     }
+
+    pub struct Timer {
+        start_time: std::time::Instant,
+        duration: std::time::Duration,
+    }
+
+    impl Timer {
+        pub fn new(duration: std::time::Duration) -> Self {
+            Timer {
+                start_time: std::time::Instant::now(),
+                duration,
+            }
+        }
+
+        pub fn time_left(&self) -> std::time::Duration {
+            self.duration - std::cmp::min(self.start_time.elapsed(), self.duration)
+        }
+
+        pub fn finished(&self) -> bool {
+            // n.b. should be const, but that feature hasn't yet stabilized
+            let zero = std::time::Duration::new(0, 0);
+            self.time_left() == zero
+        }
+    }
 }
 
 use utils::Rect;
+use utils::Timer;
 
 const TITLE: &str = "Lost-n-Found";
 
@@ -267,6 +291,18 @@ impl Color {
     }
 }
 
+#[derive(PartialEq, Eq)]
+enum GameResult {
+    Win,
+    Lose,
+}
+
+struct GameOverState {
+    result: GameResult,
+    msg_timer: Timer,
+    frozen_game_time: std::time::Duration,
+}
+
 fn main() {
     let window = pancurses::initscr();
     pancurses::noecho(); // prevent key inputs rendering to the screen
@@ -287,29 +323,168 @@ fn main() {
 
     Color::setup();
     loop {
-        run_game(&window);
+        let result = run_game(&window);
+        if result == GameResult::Lose {
+            break;
+        }
     }
 }
 
-fn run_game(window: &pancurses::Window) {
+#[derive(Debug)]
+struct MouseState {
+    click: bool,
+    x: i32,
+    y: i32,
+}
+
+fn get_mouse_update(window: &pancurses::Window) -> Option<MouseState> {
+    if let Some(pancurses::Input::KeyMouse) = window.getch() {
+        if let Ok(mouse_event) = pancurses::getmouse() {
+            return Some(MouseState {
+                click: (mouse_event.bstate & pancurses::BUTTON1_CLICKED) != 0,
+                x: mouse_event.x,
+                y: mouse_event.y,
+            });
+        }
+    }
+
+    None
+}
+
+fn render_game_timer(
+    time_remaining: std::time::Duration,
+    time_rect: &Rect,
+    window: &pancurses::Window,
+) {
+    assert!(time_remaining >= std::time::Duration::new(0, 0));
+    window.mvaddstr(
+        time_rect.top,
+        time_rect.left,
+        format!(
+            "Time: {:02}.{:03}",
+            time_remaining.as_secs(),
+            time_remaining.subsec_millis(),
+        ),
+    );
+}
+
+fn render_game_board(
+    game_grid: &GameGrid,
+    grid_rect: &Rect,
+    window: &pancurses::Window,
+    mouse_state: &MouseState,
+) {
+    // add the leading border cells on top of the grid
+    for col in 0..game_grid.width() {
+        window.mvaddstr(grid_rect.top, grid_rect.left + 1 + 4 * col, "___");
+    }
+
+    // render the grid
+    for row in 0..game_grid.height() {
+        let row_offset = (row * 2) + grid_rect.top + 1;
+        // add the leading border cells for each row
+        window.mvaddch(row_offset, grid_rect.left, '|');
+        window.mvaddch(row_offset + 1, grid_rect.left, '|');
+
+        // render each cell
+        for col in 0..game_grid.width() {
+            let col_offset = grid_rect.left + 1 + 4 * col;
+            // safe to unwrap since we are iterating over the grid by its own bounds
+            let grid_cell = game_grid.item(col, row).unwrap();
+            let (grid_item_lines, grid_item_attributes) = if grid_cell.revealed {
+                match grid_cell.item {
+                    GridItem::Solution => (["***|", "***|"], Color::BlackOnWhite.to_color_pair()),
+                    GridItem::Hint(hint_dir) => match hint_dir {
+                        HintDir::Left => (["<--|", "___|"], Color::Cyan.to_color_pair()),
+                        HintDir::Right => (["-->|", "___|"], Color::Yellow.to_color_pair()),
+                        HintDir::Up => ([" ^ |", "_|_|"], Color::Magenta.to_color_pair()),
+                        HintDir::Down => ([" | |", "_V_|"], Color::Green.to_color_pair()),
+                    },
+                }
+            } else {
+                (["   |", "___|"], pancurses::A_NORMAL)
+            };
+
+            window.attron(grid_item_attributes);
+            window.mvaddstr(row_offset, col_offset, grid_item_lines[0]);
+            window.mvaddstr(row_offset + 1, col_offset, grid_item_lines[1]);
+            window.attroff(grid_item_attributes);
+            window.attroff(pancurses::A_BLINK);
+        }
+    }
+
+    // if we are hovering over a grid cell, highlight the selected cell
+    let mouse_game_grid_pos =
+        xform::window_to_game_grid(mouse_state.x, mouse_state.y, grid_rect.left, grid_rect.top);
+    if game_grid
+        .item(mouse_game_grid_pos.0, mouse_game_grid_pos.1)
+        .is_some()
+    {
+        let highlighted_rect = xform::game_grid_to_window(
+            mouse_game_grid_pos.0,
+            mouse_game_grid_pos.1,
+            grid_rect.left,
+            grid_rect.top,
+        );
+
+        for row in highlighted_rect.top..=highlighted_rect.bottom() {
+            window.mvchgat(
+                row,
+                highlighted_rect.left,
+                highlighted_rect.width,
+                pancurses::A_BLINK,
+                0,
+            );
+        }
+    }
+}
+
+fn render_game_over_text(
+    game_over_state: &GameOverState,
+    window: &pancurses::Window,
+    grid_rect: &Rect,
+) {
+    let game_over_text = match game_over_state.result {
+        GameResult::Lose => "Failed! Exiting in...",
+        GameResult::Win => "Success! Next board in...",
+    };
+
+    // adjust the time by a half second so that the time reads better.
+    let adjusted_time_left =
+        game_over_state.msg_timer.time_left() + std::time::Duration::from_millis(500);
+    let secs_left = adjusted_time_left.as_secs();
+
+    let time_text = format!("{} secs", secs_left);
+
+    window.attron(pancurses::A_BLINK);
+    for (i, text) in [game_over_text, &time_text].iter().enumerate() {
+        window.mvaddstr(
+            grid_rect.center_y() + (i as i32),
+            grid_rect.center_x() - (text.len() / 2) as i32,
+            text,
+        );
+    }
+    window.attroff(pancurses::A_BLINK);
+}
+
+fn run_game(window: &pancurses::Window) -> GameResult {
     // Not using a Rect because this grid isn't ACTUALLY sized normally like a rect. There are spaces
     let mut rng = ThreadRangeRng::new();
     let mut game_grid = GameGrid::new(25, 20, &mut rng);
 
-    let center_cell_range =
-        xform::game_grid_to_window(game_grid.width() / 2, game_grid.height() / 2, 0, 0);
-    let grid_left = (window.get_max_x() / 2) - center_cell_range.center_x();
-    let grid_top = (window.get_max_y() / 2) - center_cell_range.center_y();
-    let grid_center = (
-        grid_left + center_cell_range.center_x(),
-        grid_top + center_cell_range.center_y(),
-    );
+    let grid_bounds = xform::game_grid_to_window(game_grid.width(), game_grid.height(), 0, 0);
+    let grid_rect = Rect {
+        left: (window.get_max_x() - grid_bounds.right()) / 2,
+        top: (window.get_max_y() - grid_bounds.bottom()) / 2,
+        width: grid_bounds.right(),
+        height: grid_bounds.bottom(),
+    };
 
-    #[derive(Debug)]
-    struct MouseState {
-        click: bool,
-        x: i32,
-        y: i32,
+    let time_rect = Rect {
+        left: grid_rect.left,
+        top: grid_rect.top - 4,
+        width: 30,
+        height: 4,
     };
 
     let mut mouse_state = MouseState {
@@ -318,141 +493,66 @@ fn run_game(window: &pancurses::Window) {
         y: 0,
     };
 
-    let mut last_clicked_cell: Option<GridCell> = None;
-    let mut board_finished_timer: Option<std::time::Instant> = None;
     const BOARD_FINISH_MSG_TIME: std::time::Duration = std::time::Duration::from_secs(5);
 
-    while board_finished_timer.is_none()
-        || board_finished_timer.unwrap().elapsed() < BOARD_FINISH_MSG_TIME
-    {
+    let game_timer = Timer::new(std::time::Duration::from_secs(10));
+
+    let mut game_over_state: Option<GameOverState> = None;
+    while game_over_state.is_none() || !game_over_state.as_ref().unwrap().msg_timer.finished() {
         // If we get a mouse event, update our mouse state
-        if let Some(pancurses::Input::KeyMouse) = window.getch() {
-            if let Ok(mouse_event) = pancurses::getmouse() {
-                mouse_state = MouseState {
-                    click: (mouse_event.bstate & pancurses::BUTTON1_CLICKED) != 0,
-                    x: mouse_event.x,
-                    y: mouse_event.y,
-                };
-            }
+        mouse_state.click = false; // clear out any mouse state from the last frame
+        if let Some(mouse_update) = get_mouse_update(&window) {
+            mouse_state = mouse_update;
         }
 
-        // snap the mouse_state_str before I potentially consume the click
-        let mouse_state_str = format!("{:?}", mouse_state);
+        // Update the board and check if we've triggered a game over
+        if game_over_state.is_none() {
+            // check for the lose state
+            if game_timer.finished() {
+                game_over_state = Some(GameOverState {
+                    result: GameResult::Lose,
+                    msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
+                    frozen_game_time: game_timer.time_left(),
+                });
+            }
+            // check if our last input triggered a win state
+            else if mouse_state.click {
+                // convert the mouse position to an item in a grid cell
+                let grid_pos = xform::window_to_game_grid(
+                    mouse_state.x,
+                    mouse_state.y,
+                    grid_rect.left,
+                    grid_rect.top,
+                );
 
-        // convert the mouse position to an item in a grid cell
-        let grid_pos =
-            xform::window_to_game_grid(mouse_state.x, mouse_state.y, grid_left, grid_top);
-        let hovered_over_grid_cell: Option<GridCell> = {
-            let hovered_over_grid_cell = game_grid.mut_item(grid_pos.0, grid_pos.1);
-            if mouse_state.click {
-                mouse_state.click = false;
-                // FIXME: ugh why is this necessary to use an optional mutable ref???
-                if let Some(&mut ref mut item) = hovered_over_grid_cell {
-                    item.revealed = true;
-                }
+                let hovered_over_grid_cell = game_grid.mut_item(grid_pos.0, grid_pos.1);
 
-                if let Some(&mut ref mut cell) = hovered_over_grid_cell {
-                    if board_finished_timer.is_none() {
-                        if let GridItem::Solution = cell.item {
-                            board_finished_timer = Some(std::time::Instant::now());
-                        }
+                if let Some(cell) = hovered_over_grid_cell {
+                    cell.revealed = true;
+
+                    if let GridItem::Solution = cell.item {
+                        game_over_state = Some(GameOverState {
+                            result: GameResult::Win,
+                            msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
+                            frozen_game_time: game_timer.time_left(),
+                        });
                     }
-
-                    last_clicked_cell = Some(cell.clone())
-                } else {
-                    last_clicked_cell = None
                 }
             }
-            hovered_over_grid_cell.copied()
-        };
+        }
 
         // use erase instead of clear
         window.erase();
 
-        // render the debug mouse info
-        window.mvaddstr(0, 0, mouse_state_str);
-        window.mvaddstr(1, 0, format!("{:?}", last_clicked_cell));
+        let game_time_remaining = match &game_over_state {
+            Some(game_over) => game_over.frozen_game_time,
+            None => game_timer.time_left(),
+        };
+        render_game_timer(game_time_remaining, &time_rect, &window);
+        render_game_board(&game_grid, &grid_rect, &window, &mouse_state);
 
-        // add the leading border cells on top of the grid
-        for col in 0..game_grid.width() {
-            window.mvaddstr(grid_top, grid_left + 1 + 4 * col, "___");
-        }
-
-        // render the grid
-        for row in 0..game_grid.height() {
-            let row_offset = (row * 2) + grid_top + 1;
-            // add the leading border cells for each row
-            window.mvaddch(row_offset, grid_left, '|');
-            window.mvaddch(row_offset + 1, grid_left, '|');
-
-            // render each cell
-            for col in 0..game_grid.width() {
-                let col_offset = grid_left + 1 + 4 * col;
-                // safe to unwrap since we are iterating over the grid by its own bounds
-                let grid_cell = game_grid.item(col, row).unwrap();
-                let (grid_item_lines, grid_item_attributes) = if grid_cell.revealed {
-                    match grid_cell.item {
-                        GridItem::Solution => {
-                            (["***|", "***|"], Color::BlackOnWhite.to_color_pair())
-                        }
-                        GridItem::Hint(hint_dir) => match hint_dir {
-                            HintDir::Left => (["<--|", "___|"], Color::Cyan.to_color_pair()),
-                            HintDir::Right => (["-->|", "___|"], Color::Yellow.to_color_pair()),
-                            HintDir::Up => ([" ^ |", "_|_|"], Color::Magenta.to_color_pair()),
-                            HintDir::Down => ([" | |", "_V_|"], Color::Green.to_color_pair()),
-                        },
-                    }
-                } else {
-                    (["   |", "___|"], pancurses::A_NORMAL)
-                };
-
-                window.attron(grid_item_attributes);
-                window.mvaddstr(row_offset, col_offset, grid_item_lines[0]);
-                window.mvaddstr(row_offset + 1, col_offset, grid_item_lines[1]);
-                window.attroff(grid_item_attributes);
-                window.attroff(pancurses::A_BLINK);
-            }
-        }
-
-        // if we are hovering over a grid cell, highlight the selected cell
-        if hovered_over_grid_cell.is_some() {
-            let highlighted_rect =
-                xform::game_grid_to_window(grid_pos.0, grid_pos.1, grid_left, grid_top);
-            for row in highlighted_rect.top..=highlighted_rect.bottom() {
-                window.mvchgat(
-                    row,
-                    highlighted_rect.left,
-                    highlighted_rect.width,
-                    pancurses::A_BLINK,
-                    0,
-                );
-            }
-        }
-
-        if board_finished_timer.is_some() {
-            const GAME_OVER_TEXT: &str = "Success!";
-            let elapsed_time = board_finished_timer.unwrap().elapsed();
-            let secs_left = if BOARD_FINISH_MSG_TIME >= elapsed_time {
-                // adjust the time by a half second so that the time reads better.
-                let adjusted_time = BOARD_FINISH_MSG_TIME + std::time::Duration::from_millis(500);
-                (adjusted_time - elapsed_time).as_secs()
-            } else {
-                0
-            };
-            let next_board_text = format!("Next board in... {} secs", secs_left);
-
-            window.attron(pancurses::A_BLINK);
-            window.mvaddstr(
-                grid_center.1,
-                grid_center.0 - (GAME_OVER_TEXT.len() / 2) as i32,
-                GAME_OVER_TEXT,
-            );
-            window.mvaddstr(
-                grid_center.1 + 1,
-                grid_center.0 - (next_board_text.len() / 2) as i32,
-                next_board_text,
-            );
-            window.attroff(pancurses::A_BLINK);
+        if let Some(game_over) = &game_over_state {
+            render_game_over_text(game_over, &window, &grid_rect);
         }
 
         window.refresh();
@@ -460,6 +560,8 @@ fn run_game(window: &pancurses::Window) {
         // Yield for 1/30th of a second. Don't hog that CPU.
         std::thread::sleep(std::time::Duration::from_millis(33));
     }
+
+    game_over_state.unwrap().result
 }
 
 #[cfg(test)]
