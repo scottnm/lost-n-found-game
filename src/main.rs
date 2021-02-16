@@ -31,9 +31,34 @@ mod utils {
             self.top + self.height / 2
         }
     }
+
+    pub struct Timer {
+        start_time: std::time::Instant,
+        duration: std::time::Duration,
+    }
+
+    impl Timer {
+        pub fn new(duration: std::time::Duration) -> Self {
+            Timer {
+                start_time: std::time::Instant::now(),
+                duration,
+            }
+        }
+
+        pub fn time_left(&self) -> std::time::Duration {
+            self.duration - std::cmp::min(self.start_time.elapsed(), self.duration)
+        }
+
+        pub fn finished(&self) -> bool {
+            // n.b. should be const, but that feature hasn't yet stabilized
+            let zero = std::time::Duration::new(0, 0);
+            self.time_left() == zero
+        }
+    }
 }
 
 use utils::Rect;
+use utils::Timer;
 
 const TITLE: &str = "Lost-n-Found";
 
@@ -320,6 +345,23 @@ fn get_mouse_update(window: &pancurses::Window) -> Option<MouseState> {
     None
 }
 
+fn render_game_timer(
+    time_remaining: std::time::Duration,
+    time_rect: &Rect,
+    window: &pancurses::Window,
+) {
+    assert!(time_remaining >= std::time::Duration::new(0, 0));
+    window.mvaddstr(
+        time_rect.top,
+        time_rect.left,
+        format!(
+            "Time: {:02}.{:03}",
+            time_remaining.as_secs(),
+            time_remaining.subsec_millis(),
+        ),
+    );
+}
+
 fn render_game_board(
     game_grid: &GameGrid,
     grid_rect: &Rect,
@@ -404,6 +446,13 @@ fn run_game(window: &pancurses::Window) -> GameResult {
         height: grid_bounds.bottom(),
     };
 
+    let time_rect = Rect {
+        left: grid_rect.left,
+        top: grid_rect.top - 4,
+        width: 30,
+        height: 4,
+    };
+
     let mut mouse_state = MouseState {
         click: false,
         x: 0,
@@ -412,19 +461,17 @@ fn run_game(window: &pancurses::Window) -> GameResult {
 
     struct GameOverState {
         result: GameResult,
-        msg_timer: std::time::Instant,
+        msg_timer: Timer,
     }
 
     const BOARD_FINISH_MSG_TIME: std::time::Duration = std::time::Duration::from_secs(5);
 
-    let game_time_limit = std::time::Duration::from_secs(10);
-    let game_start_time = std::time::Instant::now();
+    let game_timer = Timer::new(std::time::Duration::from_secs(10));
 
     // Run the core game logic until we hit a game over state
     let game_over_state = loop {
-        mouse_state.click = false; // clear out any mouse state from the last frame
-
         // If we get a mouse event, update our mouse state
+        mouse_state.click = false; // clear out any mouse state from the last frame
         if let Some(mouse_update) = get_mouse_update(&window) {
             mouse_state = mouse_update;
         }
@@ -441,23 +488,24 @@ fn run_game(window: &pancurses::Window) -> GameResult {
                 if let GridItem::Solution = cell.item {
                     break GameOverState {
                         result: GameResult::Win,
-                        msg_timer: std::time::Instant::now(),
+                        msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
                     };
                 }
             }
         }
 
         // check for the lose state
-        if game_start_time.elapsed() > game_time_limit {
+        if game_timer.finished() {
             break GameOverState {
                 result: GameResult::Lose,
-                msg_timer: std::time::Instant::now(),
+                msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
             };
         }
 
         // use erase instead of clear
         window.erase();
 
+        render_game_timer(game_timer.time_left(), &time_rect, &window);
         render_game_board(&game_grid, &grid_rect, &window, &mouse_state);
 
         window.refresh();
@@ -466,11 +514,12 @@ fn run_game(window: &pancurses::Window) -> GameResult {
         std::thread::sleep(std::time::Duration::from_millis(33));
     };
 
-    // After hitting a game over, just continue to render the board until the game over timer elapses
-    while game_over_state.msg_timer.elapsed() < BOARD_FINISH_MSG_TIME {
-        mouse_state.click = false; // clear out any mouse state from the last frame
+    let frozen_game_time = game_timer.time_left();
 
+    // After hitting a game over, just continue to render the board until the game over timer elapses
+    while !game_over_state.msg_timer.finished() {
         // If we get a mouse event, update our mouse state
+        mouse_state.click = false; // clear out any mouse state from the last frame
         if let Some(mouse_update) = get_mouse_update(&window) {
             mouse_state = mouse_update;
         }
@@ -478,6 +527,7 @@ fn run_game(window: &pancurses::Window) -> GameResult {
         // use erase instead of clear
         window.erase();
 
+        render_game_timer(frozen_game_time, &time_rect, &window);
         render_game_board(&game_grid, &grid_rect, &window, &mouse_state);
 
         let game_over_text = match game_over_state.result {
@@ -485,14 +535,10 @@ fn run_game(window: &pancurses::Window) -> GameResult {
             GameResult::Win => "Success! Next board in...",
         };
 
-        let elapsed_time = game_over_state.msg_timer.elapsed();
-        let secs_left = if BOARD_FINISH_MSG_TIME >= elapsed_time {
-            // adjust the time by a half second so that the time reads better.
-            let adjusted_time = BOARD_FINISH_MSG_TIME + std::time::Duration::from_millis(500);
-            (adjusted_time - elapsed_time).as_secs()
-        } else {
-            0
-        };
+        // adjust the time by a half second so that the time reads better.
+        let adjusted_time_left =
+            game_over_state.msg_timer.time_left() + std::time::Duration::from_millis(500);
+        let secs_left = adjusted_time_left.as_secs();
 
         let time_text = format!("{} secs", secs_left);
 
