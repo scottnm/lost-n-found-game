@@ -85,8 +85,15 @@ mod game {
         pub revealed: bool,
     }
 
+    struct CellTimer {
+        x: i32,
+        y: i32,
+        timer: Timer,
+    }
+
     pub struct GameGrid {
         cells: Box<[GridCell]>,
+        timers: Vec<CellTimer>,
         width: i32,
         height: i32,
     }
@@ -140,6 +147,7 @@ mod game {
 
             GameGrid {
                 cells: cells.into_boxed_slice(),
+                timers: Vec::with_capacity(num_cells),
                 width,
                 height,
             }
@@ -153,7 +161,7 @@ mod game {
             self.height
         }
 
-        pub fn item(&self, x: i32, y: i32) -> Option<GridCell> {
+        pub fn cell(&self, x: i32, y: i32) -> Option<GridCell> {
             if x < 0 || x >= self.width || y < 0 || y >= self.height {
                 return None;
             }
@@ -162,7 +170,7 @@ mod game {
             Some(self.cells[index])
         }
 
-        pub fn mut_item(&mut self, x: i32, y: i32) -> Option<&mut GridCell> {
+        fn mut_cell(&mut self, x: i32, y: i32) -> Option<&mut GridCell> {
             if x < 0 || x >= self.width || y < 0 || y >= self.height {
                 return None;
             }
@@ -171,7 +179,33 @@ mod game {
             Some(&mut self.cells[index])
         }
 
-        pub fn reset_expired_cells(&mut self) {}
+        pub fn try_reveal(&mut self, x: i32, y: i32) -> Option<GridItem> {
+            let revealed_item = self.mut_cell(x, y).map(|mut_cell| {
+                mut_cell.revealed = true;
+                mut_cell.item
+            });
+
+            if revealed_item.is_some() {
+                self.timers.push(CellTimer {
+                    x,
+                    y,
+                    timer: Timer::new(std::time::Duration::from_secs(4)),
+                });
+            }
+
+            revealed_item
+        }
+
+        pub fn reset_expired_cells(&mut self) {
+            for timer_index in (0..self.timers.len()).rev() {
+                let timer_elapsed = self.timers[timer_index].timer.finished();
+                if timer_elapsed {
+                    let elapsed_timer = self.timers.swap_remove(timer_index);
+                    let cell_to_revert = self.mut_cell(elapsed_timer.x, elapsed_timer.y).unwrap();
+                    cell_to_revert.revealed = false;
+                }
+            }
+        }
     }
 }
 
@@ -399,7 +433,7 @@ fn render_game_board(
         for col in 0..game_grid.width() {
             let col_offset = grid_rect.left + 1 + 4 * col;
             // safe to unwrap since we are iterating over the grid by its own bounds
-            let grid_cell = game_grid.item(col, row).unwrap();
+            let grid_cell = game_grid.cell(col, row).unwrap();
             let (grid_item_lines, grid_item_attributes) = if grid_cell.revealed {
                 match grid_cell.item {
                     GridItem::Solution => (["***|", "***|"], Color::BlackOnWhite.to_color_pair()),
@@ -426,7 +460,7 @@ fn render_game_board(
     let mouse_game_grid_pos =
         xform::window_to_game_grid(mouse_state.x, mouse_state.y, grid_rect.left, grid_rect.top);
     if game_grid
-        .item(mouse_game_grid_pos.0, mouse_game_grid_pos.1)
+        .cell(mouse_game_grid_pos.0, mouse_game_grid_pos.1)
         .is_some()
     {
         let highlighted_rect = xform::game_grid_to_window(
@@ -574,18 +608,12 @@ fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
                     grid_rect.top,
                 );
 
-                let hovered_over_grid_cell = game_grid.mut_item(grid_pos.0, grid_pos.1);
-
-                if let Some(cell) = hovered_over_grid_cell {
-                    cell.revealed = true;
-
-                    if let GridItem::Solution = cell.item {
-                        game_over_state = Some(GameOverState {
-                            result: GameResult::Win,
-                            msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
-                            frozen_game_time: game_timer.time_left(),
-                        });
-                    }
+                if let Some(GridItem::Solution) = game_grid.try_reveal(grid_pos.0, grid_pos.1) {
+                    game_over_state = Some(GameOverState {
+                        result: GameResult::Win,
+                        msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
+                        frozen_game_time: game_timer.time_left(),
+                    });
                 }
             }
         }
