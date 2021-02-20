@@ -94,14 +94,18 @@ mod game {
     pub struct GameGrid {
         cells: Box<[GridCell]>,
         timers: Vec<CellTimer>,
+        max_revealed_cells: usize,
         width: i32,
         height: i32,
     }
 
     impl GameGrid {
-        const MAX_REVEALED_CELLS: usize = 6;
-
-        pub fn new(width: i32, height: i32, rng: &mut dyn RangeRng<i32>) -> Self {
+        pub fn new(
+            width: i32,
+            height: i32,
+            max_revealed_cells: usize,
+            rng: &mut dyn RangeRng<i32>,
+        ) -> Self {
             let solution_cell = (rng.gen_range(0, width), rng.gen_range(0, height));
 
             let num_cells = (width * height) as usize;
@@ -149,7 +153,8 @@ mod game {
 
             GameGrid {
                 cells: cells.into_boxed_slice(),
-                timers: Vec::with_capacity(Self::MAX_REVEALED_CELLS),
+                timers: Vec::with_capacity(max_revealed_cells + 1),
+                max_revealed_cells,
                 width,
                 height,
             }
@@ -203,7 +208,7 @@ mod game {
                 return;
             }
 
-            if self.timers.len() > Self::MAX_REVEALED_CELLS || self.timers[0].timer.finished() {
+            if self.timers.len() > self.max_revealed_cells || self.timers[0].timer.finished() {
                 let oldest_cell_timer = self.timers.remove(0);
                 let cell_to_revert = self
                     .mut_cell(oldest_cell_timer.x, oldest_cell_timer.y)
@@ -549,7 +554,7 @@ fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
     let mut rng = ThreadRangeRng::new();
 
     let (game_grid_width, game_grid_height) = get_grid_size_from_level(level);
-    let mut game_grid = GameGrid::new(game_grid_width, game_grid_height, &mut rng);
+    let mut game_grid = GameGrid::new(game_grid_width, game_grid_height, 6, &mut rng);
 
     let grid_bounds = xform::game_grid_to_window(game_grid.width(), game_grid.height(), 0, 0);
     let grid_rect = Rect {

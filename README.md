@@ -13,7 +13,7 @@ A quick puzzle game for GGJ21
 * [X] add a game timer and support losing if you don't solve a board in time
 * [X] support levels increasing in difficulty by reducing the time for harder levels
 * [X] support levels increasing in difficulty by growing the board (start smaller)
-* [ ] support hint cells "re-hiding" to increase difficulty
+* [X] support hint cells "re-hiding" to increase difficulty
 * [ ] support hint cells "re-hiding" faster to increase difficulty on harder levels
 * [ ] support making some hint cells empty to increase difficulty (more empty cells at higher levels)
 * [ ] support making some hint cells traps to increase difficulty (hitting a trap cell wipes out nearby hint cells)
