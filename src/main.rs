@@ -474,6 +474,18 @@ fn render_game_over_text(
     window.attroff(pancurses::A_BLINK);
 }
 
+fn get_board_time_from_level(level: usize) -> std::time::Duration {
+    const MAX_TIME_SECS: u64 = 20;
+    const MAX_TIME_REDUCTION_SECS: u64 = 15;
+
+    let difficulty_step = level as u64 / 3; // every 3 levels the difficulty step increases
+    let time_reduction_in_secs = difficulty_step * 3; // every difficulty step drops the timer by 3 seconds
+    let capped_time_reduction_in_secs =
+        std::cmp::min(time_reduction_in_secs, MAX_TIME_REDUCTION_SECS);
+
+    std::time::Duration::from_secs(MAX_TIME_SECS - capped_time_reduction_in_secs)
+}
+
 fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
     // Not using a Rect because this grid isn't ACTUALLY sized normally like a rect. There are spaces
     let mut rng = ThreadRangeRng::new();
@@ -509,7 +521,7 @@ fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
 
     const BOARD_FINISH_MSG_TIME: std::time::Duration = std::time::Duration::from_secs(5);
 
-    let game_timer = Timer::new(std::time::Duration::from_secs(10));
+    let game_timer = Timer::new(get_board_time_from_level(level));
 
     let mut game_over_state: Option<GameOverState> = None;
     while game_over_state.is_none() || !game_over_state.as_ref().unwrap().msg_timer.finished() {
