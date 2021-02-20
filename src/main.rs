@@ -85,18 +85,31 @@ mod game {
         pub revealed: bool,
     }
 
+    struct CellTimer {
+        x: i32,
+        y: i32,
+        timer: Timer,
+    }
+
     pub struct GameGrid {
-        data: Box<[GridCell]>,
+        cells: Box<[GridCell]>,
+        timers: Vec<CellTimer>,
+        max_revealed_cells: usize,
         width: i32,
         height: i32,
     }
 
     impl GameGrid {
-        pub fn new(width: i32, height: i32, rng: &mut dyn RangeRng<i32>) -> Self {
+        pub fn new(
+            width: i32,
+            height: i32,
+            max_revealed_cells: usize,
+            rng: &mut dyn RangeRng<i32>,
+        ) -> Self {
             let solution_cell = (rng.gen_range(0, width), rng.gen_range(0, height));
 
             let num_cells = (width * height) as usize;
-            let mut data = Vec::with_capacity(num_cells);
+            let mut cells = Vec::with_capacity(num_cells);
             for row in 0..height {
                 for col in 0..width {
                     fn displacement_to_hint_direction(
@@ -131,7 +144,7 @@ mod game {
                         }
                     };
 
-                    data.push(GridCell {
+                    cells.push(GridCell {
                         item,
                         revealed: false,
                     });
@@ -139,7 +152,9 @@ mod game {
             }
 
             GameGrid {
-                data: data.into_boxed_slice(),
+                cells: cells.into_boxed_slice(),
+                timers: Vec::with_capacity(max_revealed_cells + 1),
+                max_revealed_cells,
                 width,
                 height,
             }
@@ -153,22 +168,53 @@ mod game {
             self.height
         }
 
-        pub fn item(&self, x: i32, y: i32) -> Option<GridCell> {
+        pub fn cell(&self, x: i32, y: i32) -> Option<GridCell> {
             if x < 0 || x >= self.width || y < 0 || y >= self.height {
                 return None;
             }
 
             let index = (self.width * y + x) as usize;
-            Some(self.data[index])
+            Some(self.cells[index])
         }
 
-        pub fn mut_item(&mut self, x: i32, y: i32) -> Option<&mut GridCell> {
+        fn mut_cell(&mut self, x: i32, y: i32) -> Option<&mut GridCell> {
             if x < 0 || x >= self.width || y < 0 || y >= self.height {
                 return None;
             }
 
             let index = (self.width * y + x) as usize;
-            Some(&mut self.data[index])
+            Some(&mut self.cells[index])
+        }
+
+        pub fn try_reveal(&mut self, x: i32, y: i32) -> Option<GridItem> {
+            let revealed_item = self.mut_cell(x, y).map(|mut_cell| {
+                mut_cell.revealed = true;
+                mut_cell.item
+            });
+
+            if revealed_item.is_some() {
+                self.timers.push(CellTimer {
+                    x,
+                    y,
+                    timer: Timer::new(std::time::Duration::from_secs(4)),
+                });
+            }
+
+            revealed_item
+        }
+
+        pub fn reset_expired_cells(&mut self) {
+            if self.timers.is_empty() {
+                return;
+            }
+
+            if self.timers.len() > self.max_revealed_cells || self.timers[0].timer.finished() {
+                let oldest_cell_timer = self.timers.remove(0);
+                let cell_to_revert = self
+                    .mut_cell(oldest_cell_timer.x, oldest_cell_timer.y)
+                    .unwrap();
+                cell_to_revert.revealed = false;
+            }
         }
     }
 }
@@ -397,7 +443,7 @@ fn render_game_board(
         for col in 0..game_grid.width() {
             let col_offset = grid_rect.left + 1 + 4 * col;
             // safe to unwrap since we are iterating over the grid by its own bounds
-            let grid_cell = game_grid.item(col, row).unwrap();
+            let grid_cell = game_grid.cell(col, row).unwrap();
             let (grid_item_lines, grid_item_attributes) = if grid_cell.revealed {
                 match grid_cell.item {
                     GridItem::Solution => (["***|", "***|"], Color::BlackOnWhite.to_color_pair()),
@@ -424,7 +470,7 @@ fn render_game_board(
     let mouse_game_grid_pos =
         xform::window_to_game_grid(mouse_state.x, mouse_state.y, grid_rect.left, grid_rect.top);
     if game_grid
-        .item(mouse_game_grid_pos.0, mouse_game_grid_pos.1)
+        .cell(mouse_game_grid_pos.0, mouse_game_grid_pos.1)
         .is_some()
     {
         let highlighted_rect = xform::game_grid_to_window(
@@ -503,12 +549,29 @@ fn get_grid_size_from_level(level: usize) -> (i32, i32) {
     )
 }
 
+fn get_max_revealed_cells_from_level(level: usize) -> usize {
+    const INITIAL_MAX_REVEALED_CELLS: usize = 6;
+    const MAX_REVEALED_CELL_REDUCTION: usize = 5;
+
+    let difficulty_step = level / 5; // every 5 levels, you lose 1 extra revealed cell
+    let revealed_cell_reduction = difficulty_step; // every difficulty step increases the board by 1 in each dimension
+    let capped_revealed_cell_reduction =
+        std::cmp::min(revealed_cell_reduction, MAX_REVEALED_CELL_REDUCTION);
+    INITIAL_MAX_REVEALED_CELLS - capped_revealed_cell_reduction
+}
+
 fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
     // Not using a Rect because this grid isn't ACTUALLY sized normally like a rect. There are spaces
     let mut rng = ThreadRangeRng::new();
 
     let (game_grid_width, game_grid_height) = get_grid_size_from_level(level);
-    let mut game_grid = GameGrid::new(game_grid_width, game_grid_height, &mut rng);
+    let max_revealed_cells = get_max_revealed_cells_from_level(level);
+    let mut game_grid = GameGrid::new(
+        game_grid_width,
+        game_grid_height,
+        max_revealed_cells,
+        &mut rng,
+    );
 
     let grid_bounds = xform::game_grid_to_window(game_grid.width(), game_grid.height(), 0, 0);
     let grid_rect = Rect {
@@ -552,6 +615,8 @@ fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
 
         // Update the board and check if we've triggered a game over
         if game_over_state.is_none() {
+            game_grid.reset_expired_cells();
+
             // check for the lose state
             if game_timer.finished() {
                 game_over_state = Some(GameOverState {
@@ -570,18 +635,12 @@ fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
                     grid_rect.top,
                 );
 
-                let hovered_over_grid_cell = game_grid.mut_item(grid_pos.0, grid_pos.1);
-
-                if let Some(cell) = hovered_over_grid_cell {
-                    cell.revealed = true;
-
-                    if let GridItem::Solution = cell.item {
-                        game_over_state = Some(GameOverState {
-                            result: GameResult::Win,
-                            msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
-                            frozen_game_time: game_timer.time_left(),
-                        });
-                    }
+                if let Some(GridItem::Solution) = game_grid.try_reveal(grid_pos.0, grid_pos.1) {
+                    game_over_state = Some(GameOverState {
+                        result: GameResult::Win,
+                        msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
+                        frozen_game_time: game_timer.time_left(),
+                    });
                 }
             }
         }
