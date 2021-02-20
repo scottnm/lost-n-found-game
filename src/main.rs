@@ -322,11 +322,14 @@ fn main() {
     pancurses::resize_term(WIN.height, WIN.width);
 
     Color::setup();
+    let mut level = 1;
     loop {
-        let result = run_game(&window);
+        let result = run_game(level, &window);
         if result == GameResult::Lose {
             break;
         }
+
+        level += 1;
     }
 }
 
@@ -349,6 +352,10 @@ fn get_mouse_update(window: &pancurses::Window) -> Option<MouseState> {
     }
 
     None
+}
+
+fn render_level_header(level: usize, level_rect: &Rect, window: &pancurses::Window) {
+    window.mvaddstr(level_rect.top, level_rect.left, format!("Level: {}", level));
 }
 
 fn render_game_timer(
@@ -467,7 +474,19 @@ fn render_game_over_text(
     window.attroff(pancurses::A_BLINK);
 }
 
-fn run_game(window: &pancurses::Window) -> GameResult {
+fn get_board_time_from_level(level: usize) -> std::time::Duration {
+    const MAX_TIME_SECS: u64 = 20;
+    const MAX_TIME_REDUCTION_SECS: u64 = 15;
+
+    let difficulty_step = level as u64 / 3; // every 3 levels the difficulty step increases
+    let time_reduction_in_secs = difficulty_step * 3; // every difficulty step drops the timer by 3 seconds
+    let capped_time_reduction_in_secs =
+        std::cmp::min(time_reduction_in_secs, MAX_TIME_REDUCTION_SECS);
+
+    std::time::Duration::from_secs(MAX_TIME_SECS - capped_time_reduction_in_secs)
+}
+
+fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
     // Not using a Rect because this grid isn't ACTUALLY sized normally like a rect. There are spaces
     let mut rng = ThreadRangeRng::new();
     let mut game_grid = GameGrid::new(25, 20, &mut rng);
@@ -484,7 +503,14 @@ fn run_game(window: &pancurses::Window) -> GameResult {
         left: grid_rect.left,
         top: grid_rect.top - 4,
         width: 30,
-        height: 4,
+        height: 2,
+    };
+
+    let level_rect = Rect {
+        left: time_rect.left,
+        top: time_rect.top - 1,
+        width: 30,
+        height: 2,
     };
 
     let mut mouse_state = MouseState {
@@ -495,7 +521,7 @@ fn run_game(window: &pancurses::Window) -> GameResult {
 
     const BOARD_FINISH_MSG_TIME: std::time::Duration = std::time::Duration::from_secs(5);
 
-    let game_timer = Timer::new(std::time::Duration::from_secs(10));
+    let game_timer = Timer::new(get_board_time_from_level(level));
 
     let mut game_over_state: Option<GameOverState> = None;
     while game_over_state.is_none() || !game_over_state.as_ref().unwrap().msg_timer.finished() {
@@ -548,6 +574,7 @@ fn run_game(window: &pancurses::Window) -> GameResult {
             Some(game_over) => game_over.frozen_game_time,
             None => game_timer.time_left(),
         };
+        render_level_header(level, &level_rect, &window);
         render_game_timer(game_time_remaining, &time_rect, &window);
         render_game_board(&game_grid, &grid_rect, &window, &mouse_state);
 
