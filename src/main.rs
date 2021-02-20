@@ -322,11 +322,14 @@ fn main() {
     pancurses::resize_term(WIN.height, WIN.width);
 
     Color::setup();
+    let mut level = 1;
     loop {
-        let result = run_game(&window);
+        let result = run_game(level, &window);
         if result == GameResult::Lose {
             break;
         }
+
+        level += 1;
     }
 }
 
@@ -349,6 +352,10 @@ fn get_mouse_update(window: &pancurses::Window) -> Option<MouseState> {
     }
 
     None
+}
+
+fn render_level_header(level: usize, level_rect: &Rect, window: &pancurses::Window) {
+    window.mvaddstr(level_rect.top, level_rect.left, format!("Level: {}", level));
 }
 
 fn render_game_timer(
@@ -467,7 +474,7 @@ fn render_game_over_text(
     window.attroff(pancurses::A_BLINK);
 }
 
-fn run_game(window: &pancurses::Window) -> GameResult {
+fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
     // Not using a Rect because this grid isn't ACTUALLY sized normally like a rect. There are spaces
     let mut rng = ThreadRangeRng::new();
     let mut game_grid = GameGrid::new(25, 20, &mut rng);
@@ -484,7 +491,14 @@ fn run_game(window: &pancurses::Window) -> GameResult {
         left: grid_rect.left,
         top: grid_rect.top - 4,
         width: 30,
-        height: 4,
+        height: 2,
+    };
+
+    let level_rect = Rect {
+        left: time_rect.left,
+        top: time_rect.top - 1,
+        width: 30,
+        height: 2,
     };
 
     let mut mouse_state = MouseState {
@@ -548,6 +562,7 @@ fn run_game(window: &pancurses::Window) -> GameResult {
             Some(game_over) => game_over.frozen_game_time,
             None => game_timer.time_left(),
         };
+        render_level_header(level, &level_rect, &window);
         render_game_timer(game_time_remaining, &time_rect, &window);
         render_game_board(&game_grid, &grid_rect, &window, &mouse_state);
 
