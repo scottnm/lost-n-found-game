@@ -549,12 +549,29 @@ fn get_grid_size_from_level(level: usize) -> (i32, i32) {
     )
 }
 
+fn get_max_revealed_cells_from_level(level: usize) -> usize {
+    const INITIAL_MAX_REVEALED_CELLS: usize = 6;
+    const MAX_REVEALED_CELL_REDUCTION: usize = 5;
+
+    let difficulty_step = level / 5; // every 5 levels, you lose 1 extra revealed cell
+    let revealed_cell_reduction = difficulty_step; // every difficulty step increases the board by 1 in each dimension
+    let capped_revealed_cell_reduction =
+        std::cmp::min(revealed_cell_reduction, MAX_REVEALED_CELL_REDUCTION);
+    INITIAL_MAX_REVEALED_CELLS - capped_revealed_cell_reduction
+}
+
 fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
     // Not using a Rect because this grid isn't ACTUALLY sized normally like a rect. There are spaces
     let mut rng = ThreadRangeRng::new();
 
     let (game_grid_width, game_grid_height) = get_grid_size_from_level(level);
-    let mut game_grid = GameGrid::new(game_grid_width, game_grid_height, 6, &mut rng);
+    let max_revealed_cells = get_max_revealed_cells_from_level(level);
+    let mut game_grid = GameGrid::new(
+        game_grid_width,
+        game_grid_height,
+        max_revealed_cells,
+        &mut rng,
+    );
 
     let grid_bounds = xform::game_grid_to_window(game_grid.width(), game_grid.height(), 0, 0);
     let grid_rect = Rect {
