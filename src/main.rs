@@ -475,21 +475,40 @@ fn render_game_over_text(
 }
 
 fn get_board_time_from_level(level: usize) -> std::time::Duration {
-    const MAX_TIME_SECS: u64 = 20;
-    const MAX_TIME_REDUCTION_SECS: u64 = 15;
+    const MAX_TIME_SECS: u64 = 15;
+    const MAX_TIME_REDUCTION_SECS: u64 = 10;
+    const MIN_AFFECTED_LEVEL: usize = 6; // don't start reducing the board time until we get to at least level 6
 
-    let difficulty_step = level as u64 / 3; // every 3 levels the difficulty step increases
-    let time_reduction_in_secs = difficulty_step * 3; // every difficulty step drops the timer by 3 seconds
+    let adjusted_level = level - std::cmp::min(level, MIN_AFFECTED_LEVEL);
+    let difficulty_step = adjusted_level as u64 / 3; // every 3 levels the difficulty step increases
+    let time_reduction_in_secs = difficulty_step * 2; // every difficulty step drops the timer by 2 seconds
     let capped_time_reduction_in_secs =
         std::cmp::min(time_reduction_in_secs, MAX_TIME_REDUCTION_SECS);
 
     std::time::Duration::from_secs(MAX_TIME_SECS - capped_time_reduction_in_secs)
 }
 
+fn get_grid_size_from_level(level: usize) -> (i32, i32) {
+    // start as a 15x10 board and increase by 1 in each dimension every 3 levels
+    const START_BOARD_SIZE: (i32, i32) = (15, 10);
+    const MAX_BOARD_GROWTH: i32 = 10;
+
+    let difficulty_step = level / 3; // every 3 levels the difficulty step increases
+    let board_growth = difficulty_step as i32; // every difficulty step increases the board by 1 in each dimension
+    let capped_board_growth = std::cmp::min(board_growth, MAX_BOARD_GROWTH);
+
+    (
+        START_BOARD_SIZE.0 + capped_board_growth,
+        START_BOARD_SIZE.1 + capped_board_growth,
+    )
+}
+
 fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
     // Not using a Rect because this grid isn't ACTUALLY sized normally like a rect. There are spaces
     let mut rng = ThreadRangeRng::new();
-    let mut game_grid = GameGrid::new(25, 20, &mut rng);
+
+    let (game_grid_width, game_grid_height) = get_grid_size_from_level(level);
+    let mut game_grid = GameGrid::new(game_grid_width, game_grid_height, &mut rng);
 
     let grid_bounds = xform::game_grid_to_window(game_grid.width(), game_grid.height(), 0, 0);
     let grid_rect = Rect {
