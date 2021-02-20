@@ -197,13 +197,18 @@ mod game {
         }
 
         pub fn reset_expired_cells(&mut self) {
-            for timer_index in (0..self.timers.len()).rev() {
-                let timer_elapsed = self.timers[timer_index].timer.finished();
-                if timer_elapsed {
-                    let elapsed_timer = self.timers.swap_remove(timer_index);
-                    let cell_to_revert = self.mut_cell(elapsed_timer.x, elapsed_timer.y).unwrap();
-                    cell_to_revert.revealed = false;
-                }
+            if self.timers.is_empty() {
+                return;
+            }
+
+            const MAX_REVEALED_CELLS: usize = 6;
+
+            if self.timers.len() > MAX_REVEALED_CELLS || self.timers[0].timer.finished() {
+                let oldest_cell_timer = self.timers.remove(0);
+                let cell_to_revert = self
+                    .mut_cell(oldest_cell_timer.x, oldest_cell_timer.y)
+                    .unwrap();
+                cell_to_revert.revealed = false;
             }
         }
     }
