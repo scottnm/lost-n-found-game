@@ -99,6 +99,8 @@ mod game {
     }
 
     impl GameGrid {
+        const MAX_REVEALED_CELLS: usize = 6;
+
         pub fn new(width: i32, height: i32, rng: &mut dyn RangeRng<i32>) -> Self {
             let solution_cell = (rng.gen_range(0, width), rng.gen_range(0, height));
 
@@ -147,7 +149,7 @@ mod game {
 
             GameGrid {
                 cells: cells.into_boxed_slice(),
-                timers: Vec::with_capacity(num_cells),
+                timers: Vec::with_capacity(Self::MAX_REVEALED_CELLS),
                 width,
                 height,
             }
@@ -201,9 +203,7 @@ mod game {
                 return;
             }
 
-            const MAX_REVEALED_CELLS: usize = 6;
-
-            if self.timers.len() > MAX_REVEALED_CELLS || self.timers[0].timer.finished() {
+            if self.timers.len() > Self::MAX_REVEALED_CELLS || self.timers[0].timer.finished() {
                 let oldest_cell_timer = self.timers.remove(0);
                 let cell_to_revert = self
                     .mut_cell(oldest_cell_timer.x, oldest_cell_timer.y)
