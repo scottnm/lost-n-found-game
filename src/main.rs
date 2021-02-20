@@ -86,7 +86,7 @@ mod game {
     }
 
     pub struct GameGrid {
-        data: Box<[GridCell]>,
+        cells: Box<[GridCell]>,
         width: i32,
         height: i32,
     }
@@ -96,7 +96,7 @@ mod game {
             let solution_cell = (rng.gen_range(0, width), rng.gen_range(0, height));
 
             let num_cells = (width * height) as usize;
-            let mut data = Vec::with_capacity(num_cells);
+            let mut cells = Vec::with_capacity(num_cells);
             for row in 0..height {
                 for col in 0..width {
                     fn displacement_to_hint_direction(
@@ -131,7 +131,7 @@ mod game {
                         }
                     };
 
-                    data.push(GridCell {
+                    cells.push(GridCell {
                         item,
                         revealed: false,
                     });
@@ -139,7 +139,7 @@ mod game {
             }
 
             GameGrid {
-                data: data.into_boxed_slice(),
+                cells: cells.into_boxed_slice(),
                 width,
                 height,
             }
@@ -159,7 +159,7 @@ mod game {
             }
 
             let index = (self.width * y + x) as usize;
-            Some(self.data[index])
+            Some(self.cells[index])
         }
 
         pub fn mut_item(&mut self, x: i32, y: i32) -> Option<&mut GridCell> {
@@ -168,8 +168,10 @@ mod game {
             }
 
             let index = (self.width * y + x) as usize;
-            Some(&mut self.data[index])
+            Some(&mut self.cells[index])
         }
+
+        pub fn reset_expired_cells(&mut self) {}
     }
 }
 
@@ -552,6 +554,8 @@ fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
 
         // Update the board and check if we've triggered a game over
         if game_over_state.is_none() {
+            game_grid.reset_expired_cells();
+
             // check for the lose state
             if game_timer.finished() {
                 game_over_state = Some(GameOverState {
