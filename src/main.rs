@@ -478,20 +478,22 @@ fn render_game_board(
                 match grid_cell.item {
                     GridItem::Solution => (["***", "***"], Color::BlackOnWhite.to_color_pair()),
                     GridItem::Hint(hint_dir) => match hint_dir {
-                        HintDir::Left => (["<--", "___"], Color::BlackOnBlue.to_color_pair()),
-                        HintDir::Right => (["-->", "___"], Color::BlackOnYellow.to_color_pair()),
+                        HintDir::Left => (["<--", "   "], Color::BlackOnBlue.to_color_pair()),
+                        HintDir::Right => (["-->", "   "], Color::BlackOnYellow.to_color_pair()),
                         HintDir::Up => ([" ^ ", " | "], Color::BlackOnRed.to_color_pair()),
                         HintDir::Down => ([" | ", " V "], Color::BlackOnGreen.to_color_pair()),
                     },
-                    GridItem::Empty => (["   ", "___"], Color::BlackOnGray.to_color_pair()),
+                    GridItem::Empty => (["   ", "   "], Color::BlackOnGray.to_color_pair()),
                 }
             } else {
-                (["   ", "___"], Color::BlackOnDarkGray.to_color_pair())
+                (["   ", "   "], Color::BlackOnDarkGray.to_color_pair())
             };
 
             window.attron(grid_item_attributes);
             window.mvaddstr(row_offset, col_offset, grid_item_lines[0]);
+            window.attron(pancurses::A_UNDERLINE);
             window.mvaddstr(row_offset + 1, col_offset, grid_item_lines[1]);
+            window.attroff(pancurses::A_UNDERLINE);
             window.attroff(grid_item_attributes);
             if col < game_grid.width() - 1 {
                 window.attron(border_attribute);
