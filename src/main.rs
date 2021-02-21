@@ -554,8 +554,11 @@ fn render_game_over_text(
     game_over_rect: &Rect,
 ) {
     let (game_over_text, game_over_attributes) = match game_over_state.result {
-        GameResult::Lose => ("Failed! Exiting in...", pancurses::A_NORMAL),
-        GameResult::Win => ("Success! Next board in...", pancurses::A_NORMAL),
+        GameResult::Lose => ("Failed! Exiting in...", Color::BlackOnRed.to_color_pair()),
+        GameResult::Win => (
+            "Success! Next board in...",
+            Color::BlackOnGreen.to_color_pair(),
+        ),
     };
 
     // adjust the time by a half second so that the time reads better.
@@ -565,8 +568,7 @@ fn render_game_over_text(
 
     let time_text = format!("{} secs", secs_left);
 
-    let common_attr = pancurses::A_BLINK;
-    window.attron(common_attr | game_over_attributes);
+    window.attron(game_over_attributes);
     for (i, text) in [game_over_text, &time_text].iter().enumerate() {
         window.mvaddstr(
             game_over_rect.center_y() + (i as i32),
@@ -574,7 +576,7 @@ fn render_game_over_text(
             text,
         );
     }
-    window.attroff(common_attr | game_over_attributes);
+    window.attroff(game_over_attributes);
 }
 
 fn get_board_time_from_level(level: usize) -> std::time::Duration {
