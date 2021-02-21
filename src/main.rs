@@ -493,10 +493,12 @@ fn render_game_board(
             window.mvaddstr(row_offset, col_offset, grid_item_lines[0]);
             window.mvaddstr(row_offset + 1, col_offset, grid_item_lines[1]);
             window.attroff(grid_item_attributes);
-            window.attron(border_attribute);
-            window.mvaddstr(row_offset, col_offset + 3, "|");
-            window.mvaddstr(row_offset + 1, col_offset + 3, "|");
-            window.attroff(border_attribute);
+            if col < game_grid.width() - 1 {
+                window.attron(border_attribute);
+                window.mvaddstr(row_offset, col_offset + 3, "|");
+                window.mvaddstr(row_offset + 1, col_offset + 3, "|");
+                window.attroff(border_attribute);
+            }
         }
     }
 
