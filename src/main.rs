@@ -294,8 +294,8 @@ fn setup_pancurses_mouse() {
 enum Color {
     BlackOnGreen,
     BlackOnYellow,
-    BlackOnMagenta,
-    BlackOnCyan,
+    BlackOnRed,
+    BlackOnBlue,
     BlackOnWhite,
     BlackOnGray,
     BlackOnDarkGray,
@@ -306,8 +306,8 @@ impl Color {
         match self {
             Color::BlackOnGreen => 1,
             Color::BlackOnYellow => 2,
-            Color::BlackOnMagenta => 3,
-            Color::BlackOnCyan => 4,
+            Color::BlackOnRed => 3,
+            Color::BlackOnBlue => 4,
             Color::BlackOnWhite => 5,
             Color::BlackOnGray => 6,
             Color::BlackOnDarkGray => 7,
@@ -316,25 +316,33 @@ impl Color {
 
     fn setup() {
         pancurses::start_color();
+
+        pancurses::init_color(pancurses::COLOR_GREEN, 500, 1000, 500);
         pancurses::init_pair(
             Color::BlackOnGreen.to_num() as i16,
             pancurses::COLOR_BLACK,
             pancurses::COLOR_GREEN,
         );
+
+        pancurses::init_color(pancurses::COLOR_YELLOW, 750, 750, 500);
         pancurses::init_pair(
             Color::BlackOnYellow.to_num() as i16,
             pancurses::COLOR_BLACK,
             pancurses::COLOR_YELLOW,
         );
+
+        pancurses::init_color(pancurses::COLOR_BLUE, 500, 500, 1000);
         pancurses::init_pair(
-            Color::BlackOnCyan.to_num() as i16,
+            Color::BlackOnBlue.to_num() as i16,
             pancurses::COLOR_BLACK,
-            pancurses::COLOR_CYAN,
+            pancurses::COLOR_BLUE,
         );
+
+        pancurses::init_color(pancurses::COLOR_RED, 1000, 500, 500);
         pancurses::init_pair(
-            Color::BlackOnMagenta.to_num() as i16,
+            Color::BlackOnRed.to_num() as i16,
             pancurses::COLOR_BLACK,
-            pancurses::COLOR_MAGENTA,
+            pancurses::COLOR_RED,
         );
         pancurses::init_pair(
             Color::BlackOnWhite.to_num() as i16,
@@ -343,7 +351,7 @@ impl Color {
         );
 
         const CUSTOM_GRAY: i16 = 10;
-        pancurses::init_color(CUSTOM_GRAY, 220, 220, 220);
+        pancurses::init_color(CUSTOM_GRAY, 500, 500, 500);
         pancurses::init_pair(
             Color::BlackOnGray.to_num() as i16,
             pancurses::COLOR_BLACK,
@@ -351,7 +359,7 @@ impl Color {
         );
 
         const CUSTOM_DARK_GRAY: i16 = 11;
-        pancurses::init_color(CUSTOM_DARK_GRAY, 120, 120, 120);
+        pancurses::init_color(CUSTOM_DARK_GRAY, 250, 250, 250);
         pancurses::init_pair(
             Color::BlackOnDarkGray.to_num() as i16,
             pancurses::COLOR_BLACK,
@@ -470,9 +478,9 @@ fn render_game_board(
                 match grid_cell.item {
                     GridItem::Solution => (["***", "***"], Color::BlackOnWhite.to_color_pair()),
                     GridItem::Hint(hint_dir) => match hint_dir {
-                        HintDir::Left => (["<--", "___"], Color::BlackOnCyan.to_color_pair()),
+                        HintDir::Left => (["<--", "___"], Color::BlackOnBlue.to_color_pair()),
                         HintDir::Right => (["-->", "___"], Color::BlackOnYellow.to_color_pair()),
-                        HintDir::Up => ([" ^ ", " | "], Color::BlackOnMagenta.to_color_pair()),
+                        HintDir::Up => ([" ^ ", " | "], Color::BlackOnRed.to_color_pair()),
                         HintDir::Down => ([" | ", " V "], Color::BlackOnGreen.to_color_pair()),
                     },
                     GridItem::Empty => (["   ", "___"], Color::BlackOnGray.to_color_pair()),
