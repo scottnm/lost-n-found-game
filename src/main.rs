@@ -551,11 +551,11 @@ fn render_game_board(
 fn render_game_over_text(
     game_over_state: &GameOverState,
     window: &pancurses::Window,
-    grid_rect: &Rect,
+    game_over_rect: &Rect,
 ) {
-    let game_over_text = match game_over_state.result {
-        GameResult::Lose => "Failed! Exiting in...",
-        GameResult::Win => "Success! Next board in...",
+    let (game_over_text, game_over_attributes) = match game_over_state.result {
+        GameResult::Lose => ("Failed! Exiting in...", pancurses::A_NORMAL),
+        GameResult::Win => ("Success! Next board in...", pancurses::A_NORMAL),
     };
 
     // adjust the time by a half second so that the time reads better.
@@ -565,15 +565,16 @@ fn render_game_over_text(
 
     let time_text = format!("{} secs", secs_left);
 
-    window.attron(pancurses::A_BLINK);
+    let common_attr = pancurses::A_BLINK;
+    window.attron(common_attr | game_over_attributes);
     for (i, text) in [game_over_text, &time_text].iter().enumerate() {
         window.mvaddstr(
-            grid_rect.center_y() + (i as i32),
-            grid_rect.center_x() - (text.len() / 2) as i32,
+            game_over_rect.center_y() + (i as i32),
+            game_over_rect.center_x() - (text.len() / 2) as i32,
             text,
         );
     }
-    window.attroff(pancurses::A_BLINK);
+    window.attroff(common_attr | game_over_attributes);
 }
 
 fn get_board_time_from_level(level: usize) -> std::time::Duration {
@@ -635,6 +636,13 @@ fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
         top: (window.get_max_y() - grid_bounds.bottom()) / 2,
         width: grid_bounds.right(),
         height: grid_bounds.bottom(),
+    };
+
+    let game_over_rect = Rect {
+        left: grid_rect.left,
+        top: grid_rect.bottom() + 2,
+        width: grid_rect.width,
+        height: 2,
     };
 
     let time_rect = Rect {
@@ -713,7 +721,7 @@ fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
         render_game_board(&game_grid, &grid_rect, &window, &mouse_state);
 
         if let Some(game_over) = &game_over_state {
-            render_game_over_text(game_over, &window, &grid_rect);
+            render_game_over_text(game_over, &window, &game_over_rect);
         }
 
         window.refresh();
