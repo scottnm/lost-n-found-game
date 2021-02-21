@@ -77,6 +77,7 @@ mod game {
     pub enum GridItem {
         Solution,
         Hint(HintDir),
+        Empty,
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -138,9 +139,15 @@ mod game {
                         if x_displacement == 0 && y_displacement == 0 {
                             GridItem::Solution
                         } else {
-                            let hint =
-                                displacement_to_hint_direction(x_displacement, y_displacement);
-                            GridItem::Hint(hint)
+                            // 70% chance of generating a hint, 30% change of generating a dud
+                            let generate_hint = rng.gen_range(0, 10) < 7;
+                            if generate_hint {
+                                let hint =
+                                    displacement_to_hint_direction(x_displacement, y_displacement);
+                                GridItem::Hint(hint)
+                            } else {
+                                GridItem::Empty
+                            }
                         }
                     };
 
@@ -285,50 +292,79 @@ fn setup_pancurses_mouse() {
 }
 
 enum Color {
-    Green,
-    Yellow,
-    Magenta,
-    Cyan,
+    BlackOnGreen,
+    BlackOnYellow,
+    BlackOnRed,
+    BlackOnBlue,
     BlackOnWhite,
+    BlackOnGray,
+    BlackOnDarkGray,
 }
 
 impl Color {
     fn to_num(&self) -> u8 {
         match self {
-            Color::Green => 1,
-            Color::Yellow => 2,
-            Color::Magenta => 3,
-            Color::Cyan => 4,
+            Color::BlackOnGreen => 1,
+            Color::BlackOnYellow => 2,
+            Color::BlackOnRed => 3,
+            Color::BlackOnBlue => 4,
             Color::BlackOnWhite => 5,
+            Color::BlackOnGray => 6,
+            Color::BlackOnDarkGray => 7,
         }
     }
 
     fn setup() {
         pancurses::start_color();
+
+        pancurses::init_color(pancurses::COLOR_GREEN, 500, 1000, 500);
         pancurses::init_pair(
-            Color::Green.to_num() as i16,
+            Color::BlackOnGreen.to_num() as i16,
+            pancurses::COLOR_BLACK,
             pancurses::COLOR_GREEN,
-            pancurses::COLOR_BLACK,
         );
+
+        pancurses::init_color(pancurses::COLOR_YELLOW, 750, 750, 500);
         pancurses::init_pair(
-            Color::Yellow.to_num() as i16,
+            Color::BlackOnYellow.to_num() as i16,
+            pancurses::COLOR_BLACK,
             pancurses::COLOR_YELLOW,
-            pancurses::COLOR_BLACK,
         );
+
+        pancurses::init_color(pancurses::COLOR_BLUE, 500, 500, 1000);
         pancurses::init_pair(
-            Color::Cyan.to_num() as i16,
-            pancurses::COLOR_CYAN,
+            Color::BlackOnBlue.to_num() as i16,
             pancurses::COLOR_BLACK,
+            pancurses::COLOR_BLUE,
         );
+
+        pancurses::init_color(pancurses::COLOR_RED, 1000, 500, 500);
         pancurses::init_pair(
-            Color::Magenta.to_num() as i16,
-            pancurses::COLOR_MAGENTA,
+            Color::BlackOnRed.to_num() as i16,
             pancurses::COLOR_BLACK,
+            pancurses::COLOR_RED,
         );
+
         pancurses::init_pair(
             Color::BlackOnWhite.to_num() as i16,
             pancurses::COLOR_BLACK,
             pancurses::COLOR_WHITE,
+        );
+
+        const CUSTOM_GRAY: i16 = 10;
+        pancurses::init_color(CUSTOM_GRAY, 500, 500, 500);
+        pancurses::init_pair(
+            Color::BlackOnGray.to_num() as i16,
+            pancurses::COLOR_BLACK,
+            CUSTOM_GRAY,
+        );
+
+        const CUSTOM_DARK_GRAY: i16 = 11;
+        pancurses::init_color(CUSTOM_DARK_GRAY, 250, 250, 250);
+        pancurses::init_pair(
+            Color::BlackOnDarkGray.to_num() as i16,
+            pancurses::COLOR_BLACK,
+            CUSTOM_DARK_GRAY,
         );
     }
 
@@ -428,16 +464,23 @@ fn render_game_board(
     mouse_state: &MouseState,
 ) {
     // add the leading border cells on top of the grid
-    for col in 0..game_grid.width() {
-        window.mvaddstr(grid_rect.top, grid_rect.left + 1 + 4 * col, "___");
+    let border_attribute = Color::BlackOnDarkGray.to_color_pair();
+
+    fn generate_cell(c: u64) -> [[u64; 3]; 2] {
+        const EMPTY: u64 = ' ' as u64;
+        [[c, EMPTY, c], [c, EMPTY, c]]
     }
+
+    let left_cell = generate_cell('<' as u64);
+    let right_cell = generate_cell('>' as u64);
+    let up_cell = generate_cell('^' as u64);
+    let down_cell = generate_cell('v' as u64);
+    let diamond_cell = generate_cell(pancurses::ACS_DIAMOND());
+    let empty_cell = generate_cell(' ' as u64);
 
     // render the grid
     for row in 0..game_grid.height() {
         let row_offset = (row * 2) + grid_rect.top + 1;
-        // add the leading border cells for each row
-        window.mvaddch(row_offset, grid_rect.left, '|');
-        window.mvaddch(row_offset + 1, grid_rect.left, '|');
 
         // render each cell
         for col in 0..game_grid.width() {
@@ -446,23 +489,40 @@ fn render_game_board(
             let grid_cell = game_grid.cell(col, row).unwrap();
             let (grid_item_lines, grid_item_attributes) = if grid_cell.revealed {
                 match grid_cell.item {
-                    GridItem::Solution => (["***|", "***|"], Color::BlackOnWhite.to_color_pair()),
+                    GridItem::Solution => (diamond_cell, Color::BlackOnWhite.to_color_pair()),
                     GridItem::Hint(hint_dir) => match hint_dir {
-                        HintDir::Left => (["<--|", "___|"], Color::Cyan.to_color_pair()),
-                        HintDir::Right => (["-->|", "___|"], Color::Yellow.to_color_pair()),
-                        HintDir::Up => ([" ^ |", "_|_|"], Color::Magenta.to_color_pair()),
-                        HintDir::Down => ([" | |", "_V_|"], Color::Green.to_color_pair()),
+                        HintDir::Left => (left_cell, Color::BlackOnBlue.to_color_pair()),
+                        HintDir::Right => (right_cell, Color::BlackOnYellow.to_color_pair()),
+                        HintDir::Up => (up_cell, Color::BlackOnRed.to_color_pair()),
+                        HintDir::Down => (down_cell, Color::BlackOnGreen.to_color_pair()),
                     },
+                    GridItem::Empty => (empty_cell, Color::BlackOnGray.to_color_pair()),
                 }
             } else {
-                (["   |", "___|"], pancurses::A_NORMAL)
+                (empty_cell, Color::BlackOnDarkGray.to_color_pair())
             };
 
             window.attron(grid_item_attributes);
-            window.mvaddstr(row_offset, col_offset, grid_item_lines[0]);
-            window.mvaddstr(row_offset + 1, col_offset, grid_item_lines[1]);
+            window.mv(row_offset, col_offset);
+            for c in &grid_item_lines[0] {
+                window.addch(*c);
+            }
+            // use underlines to draw interior horizontal borders for cells
+            window.attron(pancurses::A_UNDERLINE);
+            window.mv(row_offset + 1, col_offset);
+            for c in &grid_item_lines[1] {
+                window.addch(*c);
+            }
+            window.attroff(pancurses::A_UNDERLINE);
             window.attroff(grid_item_attributes);
-            window.attroff(pancurses::A_BLINK);
+
+            // draw interior vertical borders for cells
+            if col < game_grid.width() - 1 {
+                window.attron(border_attribute);
+                window.mvaddch(row_offset, col_offset + 3, pancurses::ACS_VLINE());
+                window.mvaddch(row_offset + 1, col_offset + 3, pancurses::ACS_VLINE());
+                window.attroff(border_attribute);
+            }
         }
     }
 
@@ -481,13 +541,9 @@ fn render_game_board(
         );
 
         for row in highlighted_rect.top..=highlighted_rect.bottom() {
-            window.mvchgat(
-                row,
-                highlighted_rect.left,
-                highlighted_rect.width,
-                pancurses::A_BLINK,
-                0,
-            );
+            for col in highlighted_rect.left..=highlighted_rect.right() {
+                window.mvchgat(row, col, 1, window.mvinch(row, col) | pancurses::A_BLINK, 0);
+            }
         }
     }
 }
