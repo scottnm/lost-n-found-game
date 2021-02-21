@@ -470,10 +470,10 @@ fn render_game_board(
         [[c, EMPTY, c], [c, EMPTY, c]]
     }
 
-    let left_cell = generate_cell(pancurses::ACS_LARROW());
-    let right_cell = generate_cell(pancurses::ACS_RARROW());
-    let up_cell = generate_cell(pancurses::ACS_UARROW());
-    let down_cell = generate_cell(pancurses::ACS_DARROW());
+    let left_cell = generate_cell('<' as u64);
+    let right_cell = generate_cell('>' as u64);
+    let up_cell = generate_cell('^' as u64);
+    let down_cell = generate_cell('v' as u64);
     let diamond_cell = generate_cell(pancurses::ACS_DIAMOND());
     let empty_cell = generate_cell(' ' as u64);
 
