@@ -514,12 +514,14 @@ fn render_game_board(
             grid_rect.top,
         );
 
+        let highlight_attr =
+            window.mvinch(highlighted_rect.top, highlighted_rect.left) | pancurses::A_BLINK;
         for row in highlighted_rect.top..=highlighted_rect.bottom() {
             window.mvchgat(
                 row,
                 highlighted_rect.left,
                 highlighted_rect.width,
-                pancurses::A_BLINK,
+                highlight_attr,
                 0,
             );
         }
