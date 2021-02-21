@@ -65,7 +65,7 @@ const TITLE: &str = "Lost-n-Found";
 mod game {
     use super::*;
 
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum HintDir {
         Left,
         Up,
@@ -73,7 +73,7 @@ mod game {
         Down,
     }
 
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum GridItem {
         Solution,
         Hint(HintDir),
@@ -459,12 +459,18 @@ fn render_game_timer(
 
 fn render_game_board(
     game_grid: &GameGrid,
+    game_over_state: &Option<GameOverState>,
     grid_rect: &Rect,
     window: &pancurses::Window,
     mouse_state: &MouseState,
 ) {
     // add the leading border cells on top of the grid
     let border_attribute = Color::BlackOnDarkGray.to_color_pair();
+
+    let game_lost = game_over_state
+        .as_ref()
+        .map(|game_over| game_over.result == GameResult::Lose)
+        .unwrap_or(false);
 
     fn generate_cell(c: u64) -> [[u64; 3]; 2] {
         const EMPTY: u64 = ' ' as u64;
@@ -487,9 +493,16 @@ fn render_game_board(
             let col_offset = grid_rect.left + 1 + 4 * col;
             // safe to unwrap since we are iterating over the grid by its own bounds
             let grid_cell = game_grid.cell(col, row).unwrap();
-            let (grid_item_lines, grid_item_attributes) = if grid_cell.revealed {
+
+            // show the cell if it's currently revealed or if we lost
+            let show_cell = grid_cell.revealed || game_lost;
+
+            let (grid_item_lines, grid_item_attributes) = if show_cell {
                 match grid_cell.item {
-                    GridItem::Solution => (diamond_cell, Color::BlackOnWhite.to_color_pair()),
+                    GridItem::Solution => (
+                        diamond_cell,
+                        Color::BlackOnWhite.to_color_pair() | pancurses::A_BLINK,
+                    ),
                     GridItem::Hint(hint_dir) => match hint_dir {
                         HintDir::Left => (left_cell, Color::BlackOnBlue.to_color_pair()),
                         HintDir::Right => (right_cell, Color::BlackOnYellow.to_color_pair()),
@@ -720,7 +733,13 @@ fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
         };
         render_level_header(level, &level_rect, &window);
         render_game_timer(game_time_remaining, &time_rect, &window);
-        render_game_board(&game_grid, &grid_rect, &window, &mouse_state);
+        render_game_board(
+            &game_grid,
+            &game_over_state,
+            &grid_rect,
+            &window,
+            &mouse_state,
+        );
 
         if let Some(game_over) = &game_over_state {
             render_game_over_text(game_over, &window, &game_over_rect);
