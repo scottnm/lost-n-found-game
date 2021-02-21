@@ -344,6 +344,7 @@ impl Color {
             pancurses::COLOR_BLACK,
             pancurses::COLOR_RED,
         );
+
         pancurses::init_pair(
             Color::BlackOnWhite.to_num() as i16,
             pancurses::COLOR_BLACK,
