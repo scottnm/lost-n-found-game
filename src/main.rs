@@ -77,6 +77,7 @@ mod game {
     pub enum GridItem {
         Solution,
         Hint(HintDir),
+        Empty,
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -138,9 +139,15 @@ mod game {
                         if x_displacement == 0 && y_displacement == 0 {
                             GridItem::Solution
                         } else {
-                            let hint =
-                                displacement_to_hint_direction(x_displacement, y_displacement);
-                            GridItem::Hint(hint)
+                            // 70% chance of generating a hint, 30% change of generating a dud
+                            let generate_hint = rng.gen_range(0, 10) < 7;
+                            if generate_hint {
+                                let hint =
+                                    displacement_to_hint_direction(x_displacement, y_displacement);
+                                GridItem::Hint(hint)
+                            } else {
+                                GridItem::Empty
+                            }
                         }
                     };
 
@@ -453,6 +460,7 @@ fn render_game_board(
                         HintDir::Up => ([" ^ |", "_|_|"], Color::Magenta.to_color_pair()),
                         HintDir::Down => ([" | |", "_V_|"], Color::Green.to_color_pair()),
                     },
+                    GridItem::Empty => (["---|", "---|"], 0),
                 }
             } else {
                 (["   |", "___|"], pancurses::A_NORMAL)
