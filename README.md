@@ -1,6 +1,10 @@
 # LNF
 
-A quick puzzle game for GGJ21
+A quick puzzle game for GGJ21. I didn't actually end up executing on this idea for GGJ21, but it felt like a good enough idea to demo out. In the end I couldn't make it quite as fun as I'd originally imagined. Oh well \*shrug\*
+
+> Find the hidden cell on the board before the time runs out! Avoid traps and use hints on the board to guide your guesses.
+
+![Demo image](demo/05_traps-empty-cells-and-more.gif)
 
 # Work breakdown
 
