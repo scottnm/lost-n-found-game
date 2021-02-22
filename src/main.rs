@@ -73,6 +73,17 @@ mod game {
         Down,
     }
 
+    impl HintDir {
+        pub fn flip(&self) -> Self {
+            match self {
+                HintDir::Left => HintDir::Right,
+                HintDir::Right => HintDir::Left,
+                HintDir::Down => HintDir::Up,
+                HintDir::Up => HintDir::Down,
+            }
+        }
+    }
+
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum TrapType {
         Confusion,
@@ -503,6 +514,7 @@ fn render_game_timer(
 fn render_game_board(
     game_grid: &GameGrid,
     game_over_state: &Option<GameOverState>,
+    confusion_state: Option<bool>,
     grid_rect: &Rect,
     window: &pancurses::Window,
     mouse_state: &MouseState,
@@ -514,6 +526,8 @@ fn render_game_board(
         .as_ref()
         .map(|game_over| game_over.result == GameResult::Lose)
         .unwrap_or(false);
+
+    let show_confusion = confusion_state.is_some() && !game_lost;
 
     fn generate_cell(c: u64) -> [[u64; 3]; 2] {
         const EMPTY: u64 = ' ' as u64;
@@ -547,12 +561,21 @@ fn render_game_board(
                         diamond_cell,
                         Color::BlackOnWhite.to_color_pair() | pancurses::A_BLINK,
                     ),
-                    GridItem::Hint(hint_dir) => match hint_dir {
-                        HintDir::Left => (left_cell, Color::BlackOnBlue.to_color_pair()),
-                        HintDir::Right => (right_cell, Color::BlackOnYellow.to_color_pair()),
-                        HintDir::Up => (up_cell, Color::BlackOnRed.to_color_pair()),
-                        HintDir::Down => (down_cell, Color::BlackOnGreen.to_color_pair()),
-                    },
+                    GridItem::Hint(hint_dir) => {
+                        // If we are confused and want to show it, flip the hint directions
+                        let hint_dir = if show_confusion && confusion_state.unwrap() {
+                            hint_dir.flip()
+                        } else {
+                            hint_dir
+                        };
+
+                        match hint_dir {
+                            HintDir::Left => (left_cell, Color::BlackOnBlue.to_color_pair()),
+                            HintDir::Right => (right_cell, Color::BlackOnYellow.to_color_pair()),
+                            HintDir::Up => (up_cell, Color::BlackOnRed.to_color_pair()),
+                            HintDir::Down => (down_cell, Color::BlackOnGreen.to_color_pair()),
+                        }
+                    }
                     GridItem::Trap(trap_type) => match trap_type {
                         TrapType::Confusion => {
                             (confusion_trap_cell, Color::BlackOnOrange.to_color_pair())
@@ -730,8 +753,10 @@ fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
     };
 
     const BOARD_FINISH_MSG_TIME: std::time::Duration = std::time::Duration::from_secs(5);
+    const CONFUSION_TIME: std::time::Duration = std::time::Duration::from_secs(3);
 
     let game_timer = Timer::new(get_board_time_from_level(level));
+    let mut confusion_timer = None;
 
     let mut game_over_state: Option<GameOverState> = None;
     while game_over_state.is_none() || !game_over_state.as_ref().unwrap().msg_timer.finished() {
@@ -752,9 +777,7 @@ fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
                     msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
                     frozen_game_time: game_timer.time_left(),
                 });
-            }
-            // check if our last input triggered a win state
-            else if mouse_state.click {
+            } else if mouse_state.click {
                 // convert the mouse position to an item in a grid cell
                 let grid_pos = xform::window_to_game_grid(
                     mouse_state.x,
@@ -763,28 +786,54 @@ fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
                     grid_rect.top,
                 );
 
-                if let Some(GridItem::Solution) = game_grid.try_reveal(grid_pos.0, grid_pos.1) {
-                    game_over_state = Some(GameOverState {
-                        result: GameResult::Win,
-                        msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
-                        frozen_game_time: game_timer.time_left(),
-                    });
+                match game_grid.try_reveal(grid_pos.0, grid_pos.1) {
+                    // check if our last input triggered a win state
+                    Some(GridItem::Solution) => {
+                        game_over_state = Some(GameOverState {
+                            result: GameResult::Win,
+                            msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
+                            frozen_game_time: game_timer.time_left(),
+                        })
+                    }
+                    // check if our last input revealed a trap
+                    Some(GridItem::Trap(trap_type)) => match trap_type {
+                        TrapType::Confusion => {
+                            confusion_timer = Some(Timer::new(CONFUSION_TIME));
+                        }
+                    },
+                    _ => (),
                 }
             }
         }
 
-        // use erase instead of clear
-        window.erase();
+        // Clear the confusion timer once it expires
+        if confusion_timer.is_some() && confusion_timer.as_ref().unwrap().finished() {
+            confusion_timer = None;
+        }
+
+        fn flip_every_half_second(time: std::time::Duration) -> bool {
+            time.as_millis() % 1000 < 500
+        }
+
+        // If the confusion timer is set, flip the confusion state every half second
+        let confusion_state = confusion_timer.as_ref().map(|enabled_confusion_timer| {
+            flip_every_half_second(enabled_confusion_timer.time_left())
+        });
 
         let game_time_remaining = match &game_over_state {
             Some(game_over) => game_over.frozen_game_time,
             None => game_timer.time_left(),
         };
+
+        // use erase instead of clear to avoid tearing
+        window.erase();
+
         render_level_header(level, &level_rect, &window);
         render_game_timer(game_time_remaining, &time_rect, &window);
         render_game_board(
             &game_grid,
             &game_over_state,
+            confusion_state,
             &grid_rect,
             &window,
             &mouse_state,
