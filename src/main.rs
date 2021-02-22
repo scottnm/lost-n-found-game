@@ -74,9 +74,15 @@ mod game {
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum TrapType {
+        Confusion,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum GridItem {
         Solution,
         Hint(HintDir),
+        Trap(TrapType),
         Empty,
     }
 
@@ -105,9 +111,12 @@ mod game {
             width: i32,
             height: i32,
             max_revealed_cells: usize,
-            rng: &mut dyn RangeRng<i32>,
+            rng: &mut dyn RangeRng<usize>,
         ) -> Self {
-            let solution_cell = (rng.gen_range(0, width), rng.gen_range(0, height));
+            let solution_cell = (
+                rng.gen_range(0, width as usize) as i32,
+                rng.gen_range(0, height as usize) as i32,
+            );
 
             let num_cells = (width * height) as usize;
             let mut cells = Vec::with_capacity(num_cells);
@@ -139,14 +148,38 @@ mod game {
                         if x_displacement == 0 && y_displacement == 0 {
                             GridItem::Solution
                         } else {
-                            // 70% chance of generating a hint, 30% change of generating a dud
-                            let generate_hint = rng.gen_range(0, 10) < 7;
-                            if generate_hint {
-                                let hint =
-                                    displacement_to_hint_direction(x_displacement, y_displacement);
-                                GridItem::Hint(hint)
-                            } else {
-                                GridItem::Empty
+                            enum RandomCell {
+                                Empty,
+                                Trap,
+                                Hint,
+                            };
+
+                            // 70% chance of generating a hint, 20% chance of generating a dud, 10% of generating a trap
+                            const RANDOM_CELL_DISTRIBUTION: [RandomCell; 10] = [
+                                RandomCell::Trap,
+                                RandomCell::Empty,
+                                RandomCell::Empty,
+                                RandomCell::Hint,
+                                RandomCell::Hint,
+                                RandomCell::Hint,
+                                RandomCell::Hint,
+                                RandomCell::Hint,
+                                RandomCell::Hint,
+                                RandomCell::Hint,
+                            ];
+
+                            let random_cell = snm_rand_utils::range_rng::select_rand(
+                                &RANDOM_CELL_DISTRIBUTION,
+                                rng,
+                            );
+
+                            match random_cell {
+                                RandomCell::Empty => GridItem::Empty,
+                                RandomCell::Trap => GridItem::Trap(TrapType::Confusion),
+                                RandomCell::Hint => GridItem::Hint(displacement_to_hint_direction(
+                                    x_displacement,
+                                    y_displacement,
+                                )),
                             }
                         }
                     };
@@ -299,6 +332,7 @@ enum Color {
     BlackOnWhite,
     BlackOnGray,
     BlackOnDarkGray,
+    BlackOnOrange,
 }
 
 impl Color {
@@ -311,6 +345,7 @@ impl Color {
             Color::BlackOnWhite => 5,
             Color::BlackOnGray => 6,
             Color::BlackOnDarkGray => 7,
+            Color::BlackOnOrange => 8,
         }
     }
 
@@ -365,6 +400,14 @@ impl Color {
             Color::BlackOnDarkGray.to_num() as i16,
             pancurses::COLOR_BLACK,
             CUSTOM_DARK_GRAY,
+        );
+
+        const CUSTOM_ORANGE: i16 = 12;
+        pancurses::init_color(CUSTOM_ORANGE, 750, 450, 0);
+        pancurses::init_pair(
+            Color::BlackOnOrange.to_num() as i16,
+            pancurses::COLOR_BLACK,
+            CUSTOM_ORANGE,
         );
     }
 
@@ -483,6 +526,7 @@ fn render_game_board(
     let down_cell = generate_cell('v' as u64);
     let diamond_cell = generate_cell(pancurses::ACS_DIAMOND());
     let empty_cell = generate_cell(' ' as u64);
+    let confusion_trap_cell = generate_cell('~' as u64);
 
     // render the grid
     for row in 0..game_grid.height() {
@@ -508,6 +552,11 @@ fn render_game_board(
                         HintDir::Right => (right_cell, Color::BlackOnYellow.to_color_pair()),
                         HintDir::Up => (up_cell, Color::BlackOnRed.to_color_pair()),
                         HintDir::Down => (down_cell, Color::BlackOnGreen.to_color_pair()),
+                    },
+                    GridItem::Trap(trap_type) => match trap_type {
+                        TrapType::Confusion => {
+                            (confusion_trap_cell, Color::BlackOnOrange.to_color_pair())
+                        }
                     },
                     GridItem::Empty => (empty_cell, Color::BlackOnGray.to_color_pair()),
                 }
