@@ -65,7 +65,7 @@ const TITLE: &str = "Lost-n-Found";
 mod game {
     use super::*;
 
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum HintDir {
         Left,
         Up,
@@ -73,10 +73,27 @@ mod game {
         Down,
     }
 
-    #[derive(Debug, Clone, Copy)]
+    impl HintDir {
+        pub fn flip(&self) -> Self {
+            match self {
+                HintDir::Left => HintDir::Right,
+                HintDir::Right => HintDir::Left,
+                HintDir::Down => HintDir::Up,
+                HintDir::Up => HintDir::Down,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum TrapType {
+        Confusion,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum GridItem {
         Solution,
         Hint(HintDir),
+        Trap(TrapType),
         Empty,
     }
 
@@ -105,9 +122,12 @@ mod game {
             width: i32,
             height: i32,
             max_revealed_cells: usize,
-            rng: &mut dyn RangeRng<i32>,
+            rng: &mut dyn RangeRng<usize>,
         ) -> Self {
-            let solution_cell = (rng.gen_range(0, width), rng.gen_range(0, height));
+            let solution_cell = (
+                rng.gen_range(0, width as usize) as i32,
+                rng.gen_range(0, height as usize) as i32,
+            );
 
             let num_cells = (width * height) as usize;
             let mut cells = Vec::with_capacity(num_cells);
@@ -139,14 +159,38 @@ mod game {
                         if x_displacement == 0 && y_displacement == 0 {
                             GridItem::Solution
                         } else {
-                            // 70% chance of generating a hint, 30% change of generating a dud
-                            let generate_hint = rng.gen_range(0, 10) < 7;
-                            if generate_hint {
-                                let hint =
-                                    displacement_to_hint_direction(x_displacement, y_displacement);
-                                GridItem::Hint(hint)
-                            } else {
-                                GridItem::Empty
+                            enum RandomCell {
+                                Empty,
+                                Trap,
+                                Hint,
+                            };
+
+                            // 70% chance of generating a hint, 20% chance of generating a dud, 10% of generating a trap
+                            const RANDOM_CELL_DISTRIBUTION: [RandomCell; 10] = [
+                                RandomCell::Trap,
+                                RandomCell::Empty,
+                                RandomCell::Empty,
+                                RandomCell::Hint,
+                                RandomCell::Hint,
+                                RandomCell::Hint,
+                                RandomCell::Hint,
+                                RandomCell::Hint,
+                                RandomCell::Hint,
+                                RandomCell::Hint,
+                            ];
+
+                            let random_cell = snm_rand_utils::range_rng::select_rand(
+                                &RANDOM_CELL_DISTRIBUTION,
+                                rng,
+                            );
+
+                            match random_cell {
+                                RandomCell::Empty => GridItem::Empty,
+                                RandomCell::Trap => GridItem::Trap(TrapType::Confusion),
+                                RandomCell::Hint => GridItem::Hint(displacement_to_hint_direction(
+                                    x_displacement,
+                                    y_displacement,
+                                )),
                             }
                         }
                     };
@@ -299,6 +343,7 @@ enum Color {
     BlackOnWhite,
     BlackOnGray,
     BlackOnDarkGray,
+    BlackOnOrange,
 }
 
 impl Color {
@@ -311,6 +356,7 @@ impl Color {
             Color::BlackOnWhite => 5,
             Color::BlackOnGray => 6,
             Color::BlackOnDarkGray => 7,
+            Color::BlackOnOrange => 8,
         }
     }
 
@@ -365,6 +411,14 @@ impl Color {
             Color::BlackOnDarkGray.to_num() as i16,
             pancurses::COLOR_BLACK,
             CUSTOM_DARK_GRAY,
+        );
+
+        const CUSTOM_ORANGE: i16 = 12;
+        pancurses::init_color(CUSTOM_ORANGE, 750, 450, 0);
+        pancurses::init_pair(
+            Color::BlackOnOrange.to_num() as i16,
+            pancurses::COLOR_BLACK,
+            CUSTOM_ORANGE,
         );
     }
 
@@ -459,12 +513,21 @@ fn render_game_timer(
 
 fn render_game_board(
     game_grid: &GameGrid,
+    game_over_state: &Option<GameOverState>,
+    confusion_state: Option<bool>,
     grid_rect: &Rect,
     window: &pancurses::Window,
     mouse_state: &MouseState,
 ) {
     // add the leading border cells on top of the grid
     let border_attribute = Color::BlackOnDarkGray.to_color_pair();
+
+    let game_lost = game_over_state
+        .as_ref()
+        .map(|game_over| game_over.result == GameResult::Lose)
+        .unwrap_or(false);
+
+    let show_confusion = confusion_state.is_some() && !game_lost;
 
     fn generate_cell(c: u64) -> [[u64; 3]; 2] {
         const EMPTY: u64 = ' ' as u64;
@@ -477,6 +540,7 @@ fn render_game_board(
     let down_cell = generate_cell('v' as u64);
     let diamond_cell = generate_cell(pancurses::ACS_DIAMOND());
     let empty_cell = generate_cell(' ' as u64);
+    let confusion_trap_cell = generate_cell('~' as u64);
 
     // render the grid
     for row in 0..game_grid.height() {
@@ -487,14 +551,35 @@ fn render_game_board(
             let col_offset = grid_rect.left + 1 + 4 * col;
             // safe to unwrap since we are iterating over the grid by its own bounds
             let grid_cell = game_grid.cell(col, row).unwrap();
-            let (grid_item_lines, grid_item_attributes) = if grid_cell.revealed {
+
+            // show the cell if it's currently revealed or if we lost
+            let show_cell = grid_cell.revealed || game_lost;
+
+            let (grid_item_lines, grid_item_attributes) = if show_cell {
                 match grid_cell.item {
-                    GridItem::Solution => (diamond_cell, Color::BlackOnWhite.to_color_pair()),
-                    GridItem::Hint(hint_dir) => match hint_dir {
-                        HintDir::Left => (left_cell, Color::BlackOnBlue.to_color_pair()),
-                        HintDir::Right => (right_cell, Color::BlackOnYellow.to_color_pair()),
-                        HintDir::Up => (up_cell, Color::BlackOnRed.to_color_pair()),
-                        HintDir::Down => (down_cell, Color::BlackOnGreen.to_color_pair()),
+                    GridItem::Solution => (
+                        diamond_cell,
+                        Color::BlackOnWhite.to_color_pair() | pancurses::A_BLINK,
+                    ),
+                    GridItem::Hint(hint_dir) => {
+                        // If we are confused and want to show it, flip the hint directions
+                        let hint_dir = if show_confusion && confusion_state.unwrap() {
+                            hint_dir.flip()
+                        } else {
+                            hint_dir
+                        };
+
+                        match hint_dir {
+                            HintDir::Left => (left_cell, Color::BlackOnBlue.to_color_pair()),
+                            HintDir::Right => (right_cell, Color::BlackOnYellow.to_color_pair()),
+                            HintDir::Up => (up_cell, Color::BlackOnRed.to_color_pair()),
+                            HintDir::Down => (down_cell, Color::BlackOnGreen.to_color_pair()),
+                        }
+                    }
+                    GridItem::Trap(trap_type) => match trap_type {
+                        TrapType::Confusion => {
+                            (confusion_trap_cell, Color::BlackOnOrange.to_color_pair())
+                        }
                     },
                     GridItem::Empty => (empty_cell, Color::BlackOnGray.to_color_pair()),
                 }
@@ -551,11 +636,14 @@ fn render_game_board(
 fn render_game_over_text(
     game_over_state: &GameOverState,
     window: &pancurses::Window,
-    grid_rect: &Rect,
+    game_over_rect: &Rect,
 ) {
-    let game_over_text = match game_over_state.result {
-        GameResult::Lose => "Failed! Exiting in...",
-        GameResult::Win => "Success! Next board in...",
+    let (game_over_text, game_over_attributes) = match game_over_state.result {
+        GameResult::Lose => ("Failed! Exiting in...", Color::BlackOnRed.to_color_pair()),
+        GameResult::Win => (
+            "Success! Next board in...",
+            Color::BlackOnGreen.to_color_pair(),
+        ),
     };
 
     // adjust the time by a half second so that the time reads better.
@@ -565,15 +653,15 @@ fn render_game_over_text(
 
     let time_text = format!("{} secs", secs_left);
 
-    window.attron(pancurses::A_BLINK);
+    window.attron(game_over_attributes);
     for (i, text) in [game_over_text, &time_text].iter().enumerate() {
         window.mvaddstr(
-            grid_rect.center_y() + (i as i32),
-            grid_rect.center_x() - (text.len() / 2) as i32,
+            game_over_rect.center_y() + (i as i32),
+            game_over_rect.center_x() - (text.len() / 2) as i32,
             text,
         );
     }
-    window.attroff(pancurses::A_BLINK);
+    window.attroff(game_over_attributes);
 }
 
 fn get_board_time_from_level(level: usize) -> std::time::Duration {
@@ -637,6 +725,13 @@ fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
         height: grid_bounds.bottom(),
     };
 
+    let game_over_rect = Rect {
+        left: grid_rect.left,
+        top: grid_rect.bottom() + 2,
+        width: grid_rect.width,
+        height: 2,
+    };
+
     let time_rect = Rect {
         left: grid_rect.left,
         top: grid_rect.top - 4,
@@ -658,8 +753,10 @@ fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
     };
 
     const BOARD_FINISH_MSG_TIME: std::time::Duration = std::time::Duration::from_secs(5);
+    const CONFUSION_TIME: std::time::Duration = std::time::Duration::from_secs(3);
 
     let game_timer = Timer::new(get_board_time_from_level(level));
+    let mut confusion_timer = None;
 
     let mut game_over_state: Option<GameOverState> = None;
     while game_over_state.is_none() || !game_over_state.as_ref().unwrap().msg_timer.finished() {
@@ -680,9 +777,7 @@ fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
                     msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
                     frozen_game_time: game_timer.time_left(),
                 });
-            }
-            // check if our last input triggered a win state
-            else if mouse_state.click {
+            } else if mouse_state.click {
                 // convert the mouse position to an item in a grid cell
                 let grid_pos = xform::window_to_game_grid(
                     mouse_state.x,
@@ -691,29 +786,61 @@ fn run_game(level: usize, window: &pancurses::Window) -> GameResult {
                     grid_rect.top,
                 );
 
-                if let Some(GridItem::Solution) = game_grid.try_reveal(grid_pos.0, grid_pos.1) {
-                    game_over_state = Some(GameOverState {
-                        result: GameResult::Win,
-                        msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
-                        frozen_game_time: game_timer.time_left(),
-                    });
+                match game_grid.try_reveal(grid_pos.0, grid_pos.1) {
+                    // check if our last input triggered a win state
+                    Some(GridItem::Solution) => {
+                        game_over_state = Some(GameOverState {
+                            result: GameResult::Win,
+                            msg_timer: Timer::new(BOARD_FINISH_MSG_TIME),
+                            frozen_game_time: game_timer.time_left(),
+                        })
+                    }
+                    // check if our last input revealed a trap
+                    Some(GridItem::Trap(trap_type)) => match trap_type {
+                        TrapType::Confusion => {
+                            confusion_timer = Some(Timer::new(CONFUSION_TIME));
+                        }
+                    },
+                    _ => (),
                 }
             }
         }
 
-        // use erase instead of clear
-        window.erase();
+        // Clear the confusion timer once it expires
+        if confusion_timer.is_some() && confusion_timer.as_ref().unwrap().finished() {
+            confusion_timer = None;
+        }
+
+        fn flip_every_half_second(time: std::time::Duration) -> bool {
+            time.as_millis() % 1000 < 500
+        }
+
+        // If the confusion timer is set, flip the confusion state every half second
+        let confusion_state = confusion_timer.as_ref().map(|enabled_confusion_timer| {
+            flip_every_half_second(enabled_confusion_timer.time_left())
+        });
 
         let game_time_remaining = match &game_over_state {
             Some(game_over) => game_over.frozen_game_time,
             None => game_timer.time_left(),
         };
+
+        // use erase instead of clear to avoid tearing
+        window.erase();
+
         render_level_header(level, &level_rect, &window);
         render_game_timer(game_time_remaining, &time_rect, &window);
-        render_game_board(&game_grid, &grid_rect, &window, &mouse_state);
+        render_game_board(
+            &game_grid,
+            &game_over_state,
+            confusion_state,
+            &grid_rect,
+            &window,
+            &mouse_state,
+        );
 
         if let Some(game_over) = &game_over_state {
-            render_game_over_text(game_over, &window, &grid_rect);
+            render_game_over_text(game_over, &window, &game_over_rect);
         }
 
         window.refresh();
