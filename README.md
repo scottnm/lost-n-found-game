@@ -16,6 +16,6 @@ A quick puzzle game for GGJ21
 * [X] support hint cells "re-hiding" to increase difficulty
 * [X] support hint cells "re-hiding" faster to increase difficulty on harder levels
 * [X] support making some hint cells empty to increase difficulty (more empty cells at higher levels)
-* [ ] support making some hint cells traps to increase difficulty (hitting a trap cell wipes out nearby hint cells)
+* [X] support making some hint cells traps to increase difficulty (hitting a trap cell causes a confusion state)
 * [ ] support start screen and kick the player back to the start screen after time on gameover screen
 * [ ] support gameover screen (no leaderboard)
