@@ -4,7 +4,7 @@ A quick puzzle game for GGJ21. I didn't actually end up executing on this idea f
 
 > Find the hidden cell on the board before the time runs out! Avoid traps and use hints on the board to guide your guesses.
 
-![Demo image](demo/05_traps-empty-cells-and-more.gif)
+![Demo image](demo/05_traps-empty-cells-and-more.webp)
 
 # Work breakdown
 
