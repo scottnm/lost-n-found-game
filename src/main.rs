@@ -163,7 +163,7 @@ mod game {
                                 Empty,
                                 Trap,
                                 Hint,
-                            };
+                            }
 
                             // 70% chance of generating a hint, 20% chance of generating a dud, 10% of generating a trap
                             const RANDOM_CELL_DISTRIBUTION: [RandomCell; 10] = [
