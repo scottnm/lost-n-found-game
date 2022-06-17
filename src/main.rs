@@ -332,7 +332,7 @@ mod xform {
 fn setup_pancurses_mouse() {
     let mut oldmask: pancurses::mmask_t = 0;
     let mousemask = pancurses::BUTTON1_CLICKED | pancurses::REPORT_MOUSE_POSITION;
-    pancurses::mousemask(mousemask, &mut oldmask);
+    pancurses::mousemask(mousemask, Some(&mut oldmask));
 }
 
 enum Color {
